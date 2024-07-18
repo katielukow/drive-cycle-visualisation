@@ -1,12 +1,10 @@
 import streamlit as st
 import os
-from data_analysis import * 
 
 # Define the directory for pages
 PAGES_DIR = 'pages'
 
 st.cache_data.clear()
-
 
 # Function to load a module from a file
 def load_module(module_name, filepath):
