@@ -1,0 +1,7 @@
+import streamlit as st
+import plotly.graph_objects as go
+from data_analysis import load_data
+
+@st.cache_data
+def load_and_process_data():
+    dc_all_fil = load_data()

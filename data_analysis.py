@@ -31,6 +31,27 @@ def coulomb_calc(data):
    
     return data
 
+def load_data():
+    nom_Vp = 36 # nominal voltage of the pack
+    max_Vp = 42 # assumed max operating voltage of the pack
+    min_Vp = 25 # assumed min operating voltage of the pack
+    Q_pack = 11 # capacity of the pack in Ah
+    I_max = 6 # max current of the pack in A
+    I_min = -30 # min current of the pack in A
+    csv = pd.read_parquet('../data/20240122-Data.parquet')
+    df_init = data_init(csv)
+    # df_all = datetime_corr(df_init)
+    df_init['Time_of_Day'] = df_init['DateTime'].dt.strftime('%p')
+
+    df_temp = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-11-01 00:00:00')].copy()
+    dc_all = drive_cycle_id(df_temp, 60) 
+
+    filtered_dict_V = {key: df for key, df in dc_all.items() if (df['Voltage'] >= min_Vp).all()} 
+    dc_all_fil = {key: df for key, df in filtered_dict_V.items() if ((df['Current'] >= I_min)&(df['Current'] <= I_max)).all()} 
+
+
+    return dc_all_fil
+
 # Identify charge cycles - slightly hard coded at the moment considers the following
 # Nominal Charge Current 
 # Current is relatively constant - -0.01 < dIdt < 0.01
@@ -185,7 +206,6 @@ def time_div(data):
     
     return data
 
-
 def drive_cycle_id(data, t_delta):
 #     t_delta = 60 # seconds - set based on histogram for mask, will determine 'rest' period
     delta_t = data.DateTime.diff()/pd.Timedelta(minutes=1)*60
@@ -207,8 +227,8 @@ def riding_events(data):
 
     # data = dc[0]
     conditions = [data.Current > 0, 
-                np.logical_and(idle[0] <= data.Current, data.Current < idle[1]), 
-                np.logical_and(coast[0] <= data.Current, data.Current < coast[1]), 
+                np.logical_and(idle[0] < data.Current, data.Current < idle[1]), 
+                np.logical_and(coast[0] < data.Current, data.Current < coast[1]), 
                 data.Current <= accel[1]]
     values = [0, 1, 2, 3]
 
@@ -232,10 +252,42 @@ def riding_events(data):
     # print('Total Time Powered on: ', total_time/60)
 
     return [accel_time, coast_time, idle_time, total_time, charge_time]
+
+def riding_events_power(data):
+    idle = [-50,0]
+    coast = [-200, -50]
+    accel = [-800, -200]
+
+    power = data['Current'] * data['Voltage']
+    conditions = [power > 0, 
+                np.logical_and(idle[0] < power, power < idle[1]), 
+                np.logical_and(coast[0] < power, power < coast[1]), 
+                power <= accel[1]]
+    values = [0, 1, 2, 3]
+
+    time = np.asarray(data.DateTime.diff().dt.total_seconds().copy()) # time in seconds
+    time[0] = 0
+    # Create an array of event indices with the same size as the data index
+    event_idx = np.select(conditions, values)
+
+    df = pd.DataFrame({'event': event_idx, 'dt': time})
+
+    accel_time = np.cumsum(df[df.event == 3].dt).iloc[-1] if (df['event'] == 3).sum() > 0 else 0
+    coast_time = np.cumsum(df[df.event == 2].dt).iloc[-1] if (df['event'] == 2).sum() > 0 else 0
+    idle_time = np.cumsum(df[df.event == 1].dt).iloc[-1] if (df['event'] == 1).sum() > 0 else 0
+    charge_time = np.cumsum(df[df.event == 0].dt).iloc[-1] if (df['event'] == 0).sum() > 0 else 0
+    total_time = np.cumsum(df.dt).iloc[-1]
+
+    # print('Acceleration Time: ', accel_time/60)
+    # print('Coast Time: ', coast_time/60)
+    # print('Idle Time: ', idle_time/60)
+    # print('Charge Time: ', charge_time/60)
+    # print('Total Time Powered on: ', total_time/60)
+
+    return [accel_time, coast_time, idle_time, total_time, charge_time]
 #     return new_df
-
-
 def count_days(start_date, end_date):
+    
     """
     Count the number of Fridays between two dates (inclusive).
     
@@ -267,3 +319,93 @@ def count_days(start_date, end_date):
         current_date += timedelta(days=1)
     
     return day_counts
+
+def energy_calc(data):
+    df = data.copy()
+    time = df.DateTime.diff().dt.total_seconds().copy() # time in seconds
+    time.iloc[0] = 0
+
+    df.loc[:,'dt'] = time
+
+    temp = df[df.dt >= 0]
+
+    power = temp['Current'] * temp['Voltage'] # power in watts
+    energy = np.trapz(power, np.cumsum(temp.dt)) / 3600 # energy in kilojoules
+    capacity = np.trapz(temp['Current'], np.cumsum(temp.dt)) / 3600 # capacity in amp hours
+        
+    return energy, capacity
+
+def stats_calc(data_input):
+    Imeans = [data_input[i]['Current'].mean() for i in data_input]
+
+    Pmeans = [(data_input[i]['Current'] * data_input[i]['Voltage']).mean() for i in data_input]
+    V0 = [data_input[i]['Voltage'].iloc[0] for i in data_input]
+    Vend = [data_input[i]['Voltage'].iloc[-1] for i in data_input]
+
+    Pmax = [
+        (data_input[i]['Current'] * data_input[i]['Voltage']).max()
+        if (data_input[i]['Current'] * data_input[i]['Voltage']).mean() > 0
+        else (data_input[i]['Current'] * data_input[i]['Voltage']).min()
+        for i in data_input
+    ]
+
+    Imax = [
+        (data_input[i]['Current']).max()
+        if (data_input[i]['Current']).mean() > 0
+        else (data_input[i]['Current']).min()
+        for i in data_input
+    ]
+
+    drive_cycle_id = [i for i in data_input]
+
+    duration = []
+
+    for i in data_input:
+        time = np.cumsum(data_input[i].DateTime.diff().dt.total_seconds())
+        d = time.iloc[-1]
+        duration.append(d)
+
+    dates = [data_input[i].DateTime.iloc[0].date() for i in data_input]
+    TOD = [data_input[i].DateTime.iloc[0].strftime('%p') for i in data_input]
+
+    Emeans = []
+    Capmeans = []
+    events_I = []
+    events_P = []
+
+    for i in data_input:
+        energy, capacity = energy_calc(data_input[i])
+        Emeans.append(energy)
+        Capmeans.append(capacity)
+        x = riding_events(data_input[i])
+        events_I.append(x)
+        y = riding_events_power(data_input[i])
+        events_P.append(y)
+    
+    df = pd.DataFrame({"Drive Cycle ID": drive_cycle_id,
+                       "Duration [s]": duration, 
+                       "Date": dates, 
+                       "Mean Current [A]":Imeans, 
+                       "Energy [Wh]":Emeans, 
+                       "Mean Power [W]":Pmeans, 
+                       "Capacity [Ah]":Capmeans, 
+                    #    "Initial Voltage [V]":V0, 
+                    #    "Final Voltage [V]":Vend, 
+                       "Max Current [A]":Imax, 
+                       "Max Power [W]":Pmax, 
+                    #    "TOD": TOD, 
+                       "High_I": [row[0] for row in events_I], 
+                       "Medium_I": [row[1] for row in events_I], 
+                       "Low_I": [row[2] for row in events_I], 
+                       "Charge_I": [row[4] for row in events_I],
+                        "High_P": [row[0] for row in events_P], 
+                       "Medium_P": [row[1] for row in events_P], 
+                       "Low_P": [row[2] for row in events_P], 
+                       "Charge_P": [row[4] for row in events_P]
+                       }) 
+    
+    # df['Time of Day'] = (df['TOD'] == 'PM').astype(int)
+
+    return df
+
+
