@@ -43,8 +43,8 @@ def load_data():
     # df_all = datetime_corr(df_init)
     df_init['Time_of_Day'] = df_init['DateTime'].dt.strftime('%p')
 
-    df_temp = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-11-01 00:00:00')].copy()
-    dc_all = drive_cycle_id(df_temp, 60) 
+    # df_temp = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-11-01 00:00:00')].copy()
+    dc_all = drive_cycle_id(df_init, 60) 
 
     filtered_dict_V = {key: df for key, df in dc_all.items() if (df['Voltage'] >= min_Vp).all()} 
     dc_all_fil = {key: df for key, df in filtered_dict_V.items() if ((df['Current'] >= I_min)&(df['Current'] <= I_max)).all()} 
