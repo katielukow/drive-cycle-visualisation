@@ -4,7 +4,8 @@ import os
 # Define the directory for pages
 PAGES_DIR = 'pages'
 
-st.cache_data.clear()
+# st.cache_data.clear()
+# file_path = os.path.join(PAGES_DIR, '1_All_Data.py')
 
 # Function to load a module from a file
 def load_module(module_name, filepath):

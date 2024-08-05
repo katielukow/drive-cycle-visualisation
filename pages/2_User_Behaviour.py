@@ -7,7 +7,8 @@ from data_analysis import load_data, stats_calc
 
 @st.cache_data
 def prepare_data():
-    dc_all_fil = load_data()
+    dc_all_fil, data_filtered = load_data()
+
     for df in dc_all_fil.values():
         df['Power'] = df['Voltage'] * df['Current']
 
@@ -26,10 +27,33 @@ def prepare_data():
                         value_vars=['High_P', 'Medium_P', 'Low_P'],
                         var_name='Load Type', value_name='Load')
 
-    return day_behaviour, dis_dc, dc_all_fil, violin_df
+    return day_behaviour, violin_df, stats_all
+
+def weekly_count(stats_all):
+    # Convert dates to week numbers
+    stats_all['week_number'] = pd.to_datetime(stats_all['Date']).dt.isocalendar().week
+
+    # Create a mapping of weekdays to their corresponding index in days_data
+    weekday_map = {'Monday': 0, 'Tuesday': 1, 'Wednesday': 2,
+                'Thursday': 3, 'Friday': 4, 'Saturday': 5, 'Sunday': 6}
+
+    # Map weekdays to their corresponding indices
+    stats_all['weekday_index'] = stats_all['Day of Week'].map(weekday_map)
+
+    # Initialize the days_data array
+    days_data = np.zeros((52, 7), dtype=int)
+
+    # Fill in days_data
+    for week_number, group in stats_all.groupby('week_number'):
+        unique_indices = group['weekday_index'].unique()
+        days_data[week_number - 1, unique_indices] = 1
+
+    # Compute the mean of the sum across rows
+    mean_value = np.mean(np.sum(days_data, axis=1))
+    return mean_value
 
 def app():
-    day_behaviour, dis_dc, dc_all_fil, violin_df = prepare_data()
+    day_behaviour, violin_df, stats_all = prepare_data()
 
     st.write('## User Behaviour')
 
@@ -40,24 +64,11 @@ def app():
         fig1.add_trace(go.Histogram(x=subset['Day of Week'], name=id_type.capitalize(), histfunc='count', nbinsx=7))
     st.plotly_chart(fig1)
 
-    st.write('### User Driving Behaviour based on power drawn')
-    fig3 = go.Figure()
+    mean_days = weekly_count(stats_all)
 
-    blue_scale = pc.sequential.Blues
-    num_cycles = len(dis_dc)
+    st.write(f'The average number of drive cycles per week is {mean_days:.2f}')
 
-    for i, dc in enumerate(dis_dc):
-        color_index = int((i / (num_cycles - 1)) * (len(blue_scale) - 1))
-        fig3.add_trace(go.Histogram(
-            x=dc_all_fil[dc]['Power'],
-            name=f'Drive Cycle {dc}',
-            histnorm='percent',
-            marker_color=blue_scale[color_index],
-            opacity=0.2
-        ))
-    fig3.update_layout(barmode='overlay')
-    st.plotly_chart(fig3)
-
+    st.write('### Power Distribution for Discharge Drive Cycles')
     fig2 = go.Figure()
     fig2.add_trace(go.Violin(x=violin_df['Load Type'],
                             y=violin_df['Load']
@@ -65,6 +76,16 @@ def app():
     fig2.update_traces(meanline_visible=True)
     fig2.update_layout(violinmode='group')
     st.plotly_chart(fig2)
+
+    
+    mean_behaviour = stats_all[["Mean Current [A]",	"Energy [Wh]",	"Mean Power [W]",	"Capacity [Ah]",	"Max Current [A]",	"Max Power [W]"]].mean()
+    st.dataframe(mean_behaviour)
+
+    # # Calculate absolute differences from mean values
+    # differences = (data_c1[columns_to_use] - means).abs()
+    # normal_diffs = differences / means.abs()
+
+
 
 if __name__ == "__main__":
     app()

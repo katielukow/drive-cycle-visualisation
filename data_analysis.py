@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import streamlit as st
 from scipy.signal import savgol_filter
 from datetime import datetime, timedelta
 import calendar
@@ -31,6 +32,7 @@ def coulomb_calc(data):
    
     return data
 
+@st.cache_data
 def load_data():
     nom_Vp = 36 # nominal voltage of the pack
     max_Vp = 42 # assumed max operating voltage of the pack
@@ -46,11 +48,13 @@ def load_data():
     # df_temp = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-11-01 00:00:00')].copy()
     dc_all = drive_cycle_id(df_init, 60) 
 
+    data_filtered = df_init[(df_init['Voltage'] >= min_Vp) & (df_init['Current'] >= I_min) & (df_init['Current'] <= I_max)].copy()
+
     filtered_dict_V = {key: df for key, df in dc_all.items() if (df['Voltage'] >= min_Vp).all()} 
     dc_all_fil = {key: df for key, df in filtered_dict_V.items() if ((df['Current'] >= I_min)&(df['Current'] <= I_max)).all()} 
 
 
-    return dc_all_fil
+    return dc_all_fil, data_filtered
 
 # Identify charge cycles - slightly hard coded at the moment considers the following
 # Nominal Charge Current 
@@ -58,6 +62,12 @@ def load_data():
 # Time step is less than 1 second
 # Time step is positive
 # Charge cycle is greater than 15000 data points
+
+@st.cache_data
+def load_and_process_data():
+    dc_all_fil = load_data()
+    stats_all = stats_calc(dc_all_fil)
+    return stats_all[stats_all["Mean Power [W]"] < 0].dropna()
 
 
 def charge_id(df, I_charge, dIdt):

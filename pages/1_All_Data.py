@@ -6,7 +6,7 @@ import numpy as np
 
 @st.cache_data
 def prepare_data():
-    dc_all_fil = load_data()
+    dc_all_fil, data_all = load_data()
     
     # Pre-compute charge/discharge status for each drive cycle
     cycle_status = {key: 'charge' if (df['Current'] >= 0).all() else 'discharge' for key, df in dc_all_fil.items()}
@@ -15,7 +15,7 @@ def prepare_data():
     for df in dc_all_fil.values():
         df['Time_Hours'] = (df['DateTime'] - df['DateTime'].iloc[0]).dt.total_seconds() / 3600
     
-    return dc_all_fil, cycle_status
+    return dc_all_fil, cycle_status, data_all
 
 def filter_data(dc_all_fil, cycle_status, charge, discharge):
     if charge and discharge:
@@ -43,7 +43,7 @@ def create_figure(filtered_dict_V):
     return fig
 
 def app():
-    dc_all_fil, cycle_status = prepare_data()
+    dc_all_fil, cycle_status, data_all = prepare_data()
 
     charge = st.sidebar.checkbox("Charge", True, key="page1_charge")
     discharge = st.sidebar.checkbox("Discharge", True, key="page1_discharge")
@@ -56,6 +56,8 @@ def app():
         st.write(f"Number of filtered drive cycles: {len(filtered_dict_V)}")
     else:
         st.write("No drive cycles meet the specified criteria.")
+    
+
 
 if __name__ == "__main__":
     app()
