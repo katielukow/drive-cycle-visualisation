@@ -5,6 +5,7 @@ import streamlit as st
 from scipy.signal import savgol_filter
 from datetime import datetime, timedelta
 import calendar
+from scipy.signal import find_peaks
 
 # Fix date-time formatting (this should be fixed in the arduino code...)
 def data_init(df):
@@ -44,17 +45,20 @@ def load_data():
     df_init = data_init(csv)
     # df_all = datetime_corr(df_init)
     df_init['Time_of_Day'] = df_init['DateTime'].dt.strftime('%p')
+    df_init['Power'] = df_init['Current'] * df_init['Voltage']
 
     # df_temp = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-11-01 00:00:00')].copy()
-    dc_all = drive_cycle_id(df_init, 60) 
+    # dc_all = drive_cycle_id(df_init, 60) 
 
-    data_filtered = df_init[(df_init['Voltage'] >= min_Vp) & (df_init['Current'] >= I_min) & (df_init['Current'] <= I_max)].copy()
+    data_filtered = df_init[(df_init["Current"] > I_min) & (df_init["Current"] < I_max) & (df_init['Voltage'] >= min_Vp)]
+    data_filtered["Power"] = data_filtered['Current'] * data_filtered['Voltage']
+    dc_all = drive_cycle_id(data_filtered, 60) 
 
     filtered_dict_V = {key: df for key, df in dc_all.items() if (df['Voltage'] >= min_Vp).all()} 
     dc_all_fil = {key: df for key, df in filtered_dict_V.items() if ((df['Current'] >= I_min)&(df['Current'] <= I_max)).all()} 
 
 
-    return dc_all_fil, data_filtered
+    return dc_all_fil, data_filtered, dc_all
 
 # Identify charge cycles - slightly hard coded at the moment considers the following
 # Nominal Charge Current 
@@ -65,7 +69,7 @@ def load_data():
 
 @st.cache_data
 def load_and_process_data():
-    dc_all_fil = load_data()
+    dc_all_fil, data_filtered, dc_all = load_data()
     stats_all = stats_calc(dc_all_fil)
     return stats_all[stats_all["Mean Power [W]"] < 0].dropna()
 
@@ -114,73 +118,7 @@ def charge_id(df, I_charge, dIdt):
 
     return charge_cycles
 
-def resistance(df, I_pulse, t_pulse):
-    df = df[(df.Current > I_pulse - .2) & (df.Current < I_pulse + .2)].copy()
 
-    times = df['DateTime'].values
-    diffs = np.diff(times.astype('timedelta64[ns]'))
-
-    diffs = np.pad(diffs, (0,1), 'constant', constant_values=(pd.Timedelta(0))) # pads the array to the original length to account for diff
-
-    df['dt'] = diffs /  pd.Timedelta(minutes=1) * 60
-    mask = diffs > np.timedelta64(1_000_000_000, 'ns')
-    groups = np.cumsum(mask)
-
-    df['group'] = groups
-    
-    dicts = {}
-
-    for i in enumerate(df.group):
-        temp = df[(df.group == i[1])].copy()
-
-        if (len(temp.dt) > 5):
-            # temp['Time'] = np.cumsum(temp.dt)
-            dicts[i[1]] = temp
-
-    # # breakpoint()
-    R = pd.DataFrame({'DateTime':[], 'R':[], 'V':[], 'I':[]})
-
-    for i in dicts: 
-        new_dt = dicts[i].DateTime.diff()  /  pd.Timedelta(minutes=1) * 60
-
-        dicts[i]['new_dt'] = new_dt.fillna(0)
-
-        if (dicts[i].Voltage.iloc[0] - dicts[i].Voltage.iloc[-1] < 0) & (np.cumsum(dicts[i].new_dt).iloc[-1] > t_pulse):
-            r = (dicts[i].Voltage.iloc[0] - dicts[i].Voltage.iloc[-1]) / np.mean(dicts[i].Current)
-            
-            # print(i, ": ", np.round(dicts[i].Voltage.iloc[0] - dicts[i].Voltage.iloc[-1], decimals = 4), "V, ", np.round(r, decimals = 4), "ohm"," \n")
-
-            t = [dicts[i].DateTime.iloc[0], r, dicts[i].Voltage.iloc[0] - dicts[i].Voltage.iloc[-1], np.mean(dicts[i].Current)]
-
-            R.loc[len(R)] = t
-    
-    return dicts, R
-
-def lean_fil(data, tolerance, capacity):
-    n = data.Voltage.size
-    dV = 0.0013922872340472736  * 2
-    V_min = data.Voltage.min() - tolerance # Minimum voltage for the counting bucket
-    V_max = data.Voltage.max() + tolerance # Maximum voltage for the counting bucket
-    V = np.arange(V_min, V_max, dV) # Vector V for counting and plotting
-    m = round((V_max - V_min)/dV) # Number of voltage bins (length of V)
-    N_V = np.full(n, np.nan)
-    
-    for k in np.linspace(0, m-1, m, dtype='int'):
-        N_V[k] = ((data.Voltage >= V[k]) & (data.Voltage < V[k] + dV)).sum()
-    
-    N_V = N_V[np.isfinite(N_V)]
-
-    dqdvdict = {}
-
-    dQdV_Q = (np.array(N_V) / n / dV) # LEAN dQdV
-    dQdV = [i * capacity for i in dQdV_Q] # LEAN dQdV
-    dQdV_fil = savgol_filter(dQdV, 1000, 5, mode='nearest')
-
-    dqdvdict['dQdV'] = dQdV
-    dqdvdict['V'] = V
-    dqdvdict['dQdV_fil'] = dQdV_fil
-
-    return dqdvdict
 
 def time_div(data):
     def sign(x):
@@ -230,10 +168,10 @@ def drive_cycle_id(data, t_delta):
     
     return dc
 
-def riding_events(data):
-    idle = [-1,0]
-    coast = [-10, -1]
-    accel = [-20, -10]
+def riding_events(data, bins):
+    idle = [bins[2][0], bins[2][1]]
+    coast = [bins[1][0], bins[1][1]]
+    accel = [bins[0][0], bins[0][1]]
 
     # data = dc[0]
     conditions = [data.Current > 0, 
@@ -263,10 +201,10 @@ def riding_events(data):
 
     return [accel_time, coast_time, idle_time, total_time, charge_time]
 
-def riding_events_power(data):
-    idle = [-50,0]
-    coast = [-200, -50]
-    accel = [-800, -200]
+def riding_events_power(data,  bins):
+    idle = [bins[2][0], bins[2][1]]
+    coast = [bins[1][0], bins[1][1]]
+    accel = [bins[0][0], bins[0][1]]
 
     power = data['Current'] * data['Voltage']
     conditions = [power > 0, 
@@ -294,7 +232,7 @@ def riding_events_power(data):
     # print('Charge Time: ', charge_time/60)
     # print('Total Time Powered on: ', total_time/60)
 
-    return [accel_time, coast_time, idle_time, total_time, charge_time]
+    return [accel_time, coast_time, idle_time, charge_time, total_time]
 #     return new_df
 def count_days(start_date, end_date):
     
@@ -346,76 +284,109 @@ def energy_calc(data):
     return energy, capacity
 
 def stats_calc(data_input):
-    Imeans = [data_input[i]['Current'].mean() for i in data_input]
-
     Pmeans = [(data_input[i]['Current'] * data_input[i]['Voltage']).mean() for i in data_input]
-    V0 = [data_input[i]['Voltage'].iloc[0] for i in data_input]
-    Vend = [data_input[i]['Voltage'].iloc[-1] for i in data_input]
-
-    Pmax = [
-        (data_input[i]['Current'] * data_input[i]['Voltage']).max()
-        if (data_input[i]['Current'] * data_input[i]['Voltage']).mean() > 0
-        else (data_input[i]['Current'] * data_input[i]['Voltage']).min()
-        for i in data_input
-    ]
-
-    Imax = [
-        (data_input[i]['Current']).max()
-        if (data_input[i]['Current']).mean() > 0
-        else (data_input[i]['Current']).min()
-        for i in data_input
-    ]
 
     drive_cycle_id = [i for i in data_input]
 
     duration = []
+    Emeans = []
 
     for i in data_input:
         time = np.cumsum(data_input[i].DateTime.diff().dt.total_seconds())
         d = time.iloc[-1]
         duration.append(d)
-
-    dates = [data_input[i].DateTime.iloc[0].date() for i in data_input]
-    TOD = [data_input[i].DateTime.iloc[0].strftime('%p') for i in data_input]
-
-    Emeans = []
-    Capmeans = []
-    events_I = []
-    events_P = []
-
-    for i in data_input:
         energy, capacity = energy_calc(data_input[i])
         Emeans.append(energy)
-        Capmeans.append(capacity)
-        x = riding_events(data_input[i])
-        events_I.append(x)
-        y = riding_events_power(data_input[i])
-        events_P.append(y)
+
+    dates = [data_input[i].DateTime.iloc[0].date() for i in data_input]
+
     
     df = pd.DataFrame({"Drive Cycle ID": drive_cycle_id,
                        "Duration [s]": duration, 
                        "Date": dates, 
-                       "Mean Current [A]":Imeans, 
                        "Energy [Wh]":Emeans, 
                        "Mean Power [W]":Pmeans, 
-                       "Capacity [Ah]":Capmeans, 
-                    #    "Initial Voltage [V]":V0, 
-                    #    "Final Voltage [V]":Vend, 
-                       "Max Current [A]":Imax, 
-                       "Max Power [W]":Pmax, 
-                    #    "TOD": TOD, 
-                       "High_I": [row[0] for row in events_I], 
-                       "Medium_I": [row[1] for row in events_I], 
-                       "Low_I": [row[2] for row in events_I], 
-                       "Charge_I": [row[4] for row in events_I],
-                        "High_P": [row[0] for row in events_P], 
-                       "Medium_P": [row[1] for row in events_P], 
-                       "Low_P": [row[2] for row in events_P], 
-                       "Charge_P": [row[4] for row in events_P]
+                       }) 
+
+    return df
+
+def user_stat(data_input):
+
+    drive_cycle_id = [i for i in data_input]
+    duration = []
+    for i in data_input:
+        time = np.cumsum(data_input[i].DateTime.diff().dt.total_seconds())
+        d = time.iloc[-1]
+        duration.append(d)
+    V0 = [data_input[i]['Voltage'].iloc[0] for i in data_input]
+    dates = [data_input[i].DateTime.iloc[0].date() for i in data_input]
+    TOD = [data_input[i].DateTime.iloc[0].strftime('%p') for i in data_input]
+    Pmeans = [(data_input[i]['Current'] * data_input[i]['Voltage']).mean() for i in data_input]
+
+    df = pd.DataFrame({"Drive Cycle ID": drive_cycle_id,
+                       "Duration [s]": duration, 
+                       "Date": dates, 
+                       "Initial Voltage [V]":V0, 
+                       "TOD": TOD, 
+                        "Mean Power [W]":Pmeans,
+
                        }) 
     
+    df['Status'] = (df['Mean Power [W]'] > 0).astype(int)
     # df['Time of Day'] = (df['TOD'] == 'PM').astype(int)
 
     return df
 
+def user_power_division(data, plot):
+    # Create a histogram (50 bins)
+    
+    counts, bin_edges = np.histogram(data, bins=50)
 
+    # Invert the counts to find valleys
+    inverted_counts = -counts
+
+    # Find all valleys (peaks in the inverted histogram) and their prominences
+    valleys, properties = find_peaks(inverted_counts, prominence=1)  # Adjust prominence threshold if needed
+
+    # Sort valleys by prominence and select the top 2
+    sorted_valleys = np.argsort(properties['prominences'])[::-1]  # Sort by prominence (descending)
+    top_2_valleys = valleys[sorted_valleys[:2]]  # Take the 2 most prominent valleys
+
+    # Get the positions of the top 2 valleys in terms of bin centers
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2  # Calculate the bin centers
+    valley_positions = bin_centers[top_2_valleys]
+
+    # Sort the valley positions to ensure proper boundary calculation
+    valley_positions.sort()
+
+    # Add extreme boundaries to cover all data (min and max data)
+    min_data = np.min(data)
+    max_data = np.max(data)
+    boundaries = [min_data] + valley_positions.tolist() + [max_data]
+
+    # Assign data to bins using np.digitize
+    bin_indices = np.digitize(data, boundaries)
+    if plot:
+        # Plot histogram and mark the valleys
+        plt.hist(data, bins=50, alpha=0.6, label='Data')
+        plt.plot(bin_centers[top_2_valleys], counts[top_2_valleys], 'bx', label='Top 2 Valleys', markersize=10)
+
+        # Plot vertical lines at the boundaries
+        for boundary in boundaries:
+            plt.axvline(x=boundary, color='blue', linestyle='--', label='Boundary')
+
+        plt.xlabel('Data')
+        plt.ylabel('Frequency')
+        # plt.legend()
+        plt.show()
+
+    # Separate data into bins based on valley boundaries
+    bin_1 = data[bin_indices == 1]
+    bin_2 = data[bin_indices == 2]
+    bin_3 = data[bin_indices == 3]
+
+    bins = [(min(bin_1), max(bin_1)), (min(bin_2), max(bin_2)), (min(bin_3), max(bin_3))]
+
+    hist_data = np.column_stack((bin_centers, counts))
+
+    return bins, hist_data

@@ -6,7 +6,7 @@ import numpy as np
 
 @st.cache_data
 def prepare_data():
-    dc_all_fil, data_all = load_data()
+    dc_all_fil, data_all, dc_all = load_data()
     
     # Pre-compute charge/discharge status for each drive cycle
     cycle_status = {key: 'charge' if (df['Current'] >= 0).all() else 'discharge' for key, df in dc_all_fil.items()}
