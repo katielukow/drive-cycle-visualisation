@@ -1,10 +1,10 @@
 import streamlit as st
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
 import pandas as pd
 import numpy as np
-from data_analysis import load_data, stats_calc, user_power_division, riding_events_power, charge_rate, user_stat
-import pybamm
+from data_analysis import load_data, stats_calc, user_power_division, riding_events_power, charge_rate, user_stat, pybamm_plot
+
 
 @st.cache_data
 def prepare_data():
@@ -108,19 +108,7 @@ def app():
 
     st.write("Utilising these bins we can now evaluate the individual distribtions within each trip.")
 
-    # User-set values for current categories
-    # I_values = {
-    #     'High_I': I_bins[0].mean(),
-    #     'Medium_I': I_bins[1].mean(),
-    #     'Low_I': I_bins[2].mean(),
-    #     'Charge_I': 4
-    # }
-    # fig = go.Figure(data=[go.Pie(labels=['High', 'Medium', 'Low', 'Charge','Off'], values=sum_data[['P_high', 'P_mid', 'P_low', 'P_charge','Off']])])
-    # st.plotly_chart(fig, use_container_width=True)
-
     fig_hist = go.Figure()
-
-    # Add the first trace with bins of size 0.01
     fig_hist.add_trace(go.Histogram(
         x=pwr_discharge['P_high'], 
         histnorm='probability density',
@@ -128,7 +116,6 @@ def app():
             size=0.01  # Bin width of 0.01
         ), name='High Power'
     ))
-    # Add the second trace with bins of size 0.01
     fig_hist.add_trace(go.Histogram(
         x=pwr_discharge['P_mid'], 
         histnorm='probability density',
@@ -136,8 +123,6 @@ def app():
             size=0.01  # Bin width of 0.01
         ), name='Medium Power'
     ))
-
-    # Add the third trace with bins of size 0.01
     fig_hist.add_trace(go.Histogram(
         x=pwr_discharge['P_low'], 
         histnorm='probability density',
@@ -158,9 +143,7 @@ def app():
 
     st.write("Combining this information with the preprocessing data, we can develop a stepped load profile to take in to account this power division. The following pybamm experiment definition presents this load profile.")
 
-    # I_charge = pd.Series([df['Current'].mean() for df in charge_dict.values()]).mean()
     I_charge = np.round(charge_rate(charge_dict)/ Q_pack,1)
-
     step_per = pwr_discharge.mean(axis=0)
     t_total = 0.5*60*60
     t_h = int(step_per.P_high * t_total)
@@ -188,41 +171,7 @@ def app():
     )])""")
 
     if st.button('Run PyBaMM Simulation for Stepped Profile without Rests:'):
-        # PyBaMM script that runs when the button is pressed
-        model = pybamm.lithium_ion.SPM()  # You can replace this with your specific PyBaMM model
-        sim = pybamm.Simulation(model, experiment=pybamm.Experiment(no_rest_exp), solver=pybamm.IDAKLUSolver())
-        sol = sim.solve()
-
-        # Step 4: Extract voltage and current
-        time = sol["Time [s]"].entries
-        current = sol["Current [A]"].entries
-        voltage = sol["Terminal voltage [V]"].entries
-
-        # Create a subplot figure with two subplots: one for current and one for voltage
-        fig = make_subplots(rows=2, cols=1, subplot_titles=('Current Over Time', 'Voltage Over Time'))
-
-        # Left subplot: Current
-        fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', line=dict(color='blue')), row=1, col=1)
-
-        # Right subplot: Voltage
-        fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', line=dict(color='red')), row=2, col=1)
-
-        # Update layout for the figure
-        fig.update_layout(
-            title_text='Current and Voltage Over Time',
-            xaxis_title_text='Time [s]',
-            height=600,  # Adjust the height to fit the subplots
-            showlegend=False
-        )
-
-        # Update axis labels for the individual subplots
-        fig.update_xaxes(title_text="Time [s]", row=1, col=1)
-        fig.update_yaxes(title_text="Current [A]", row=1, col=1)
-        fig.update_xaxes(title_text="Time [s]", row=1, col=2)
-        fig.update_yaxes(title_text="Voltage [V]", row=1, col=2)
-
-        # Display the plot in Streamlit
-        st.plotly_chart(fig, use_container_width=True)
+        pybamm_plot(no_rest_exp)
     
     st.write("Stepped Load Profile With Rests:")
     t_total_all = (data_all['DateTime'].iloc[-1] - data_all['DateTime'].iloc[0]).total_seconds()
@@ -251,44 +200,9 @@ def app():
         pybamm.Experiment([(
             {formatted_rest}
         )])""")
+    
     if st.button('Run PyBaMM Simulation for Stepped Profile with Rests:'):
-
-        model = pybamm.lithium_ion.SPM()
-        sim = pybamm.Simulation(model, experiment=pybamm.Experiment(rest_exp), solver=pybamm.IDAKLUSolver())
-
-        # Solve the simulation
-        sol = sim.solve()
-
-        # Step 4: Extract voltage and current
-        time = sol["Time [s]"].entries
-        current = sol["Current [A]"].entries
-        voltage = sol["Terminal voltage [V]"].entries
-
-        # Create a subplot figure with two subplots: one for current and one for voltage
-        fig = make_subplots(rows=2, cols=1, subplot_titles=('Current Over Time', 'Voltage Over Time'))
-
-        # Left subplot: Current
-        fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', line=dict(color='blue')), row=1, col=1)
-
-        # Right subplot: Voltage
-        fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', line=dict(color='red')), row=2, col=1)
-
-        # Update layout for the figure
-        fig.update_layout(
-            title_text='Current and Voltage Over Time',
-            xaxis_title_text='Time [s]',
-            height=600,  # Adjust the height to fit the subplots
-            showlegend=False
-        )
-
-        # Update axis labels for the individual subplots
-        fig.update_xaxes(title_text="Time [s]", row=1, col=1)
-        fig.update_yaxes(title_text="Current [A]", row=1, col=1)
-        fig.update_xaxes(title_text="Time [s]", row=1, col=2)
-        fig.update_yaxes(title_text="Voltage [V]", row=1, col=2)
-
-        # Display the plot in Streamlit
-        st.plotly_chart(fig, use_container_width=True)
+        pybamm_plot(rest_exp)
     
 
 
