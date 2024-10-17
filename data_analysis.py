@@ -6,6 +6,9 @@ from scipy.signal import savgol_filter
 from datetime import datetime, timedelta
 import calendar
 from scipy.signal import find_peaks
+from plotly.subplots import make_subplots
+import pybamm
+import plotly.graph_objects as go
 
 # Fix date-time formatting (this should be fixed in the arduino code...)
 def data_init(df):
@@ -390,3 +393,75 @@ def user_power_division(data, plot):
     hist_data = np.column_stack((bin_centers, counts))
 
     return bins, hist_data
+    
+def charge_rate(charge_dict):
+    # Calculate stats for charge_dict
+    c = stats_calc(charge_dict)
+
+    # Calculate deltaV as the difference between the last and first 'Voltage' values for each entry
+    deltaV = {key: df['Voltage'].iloc[-1] - df['Voltage'].iloc[0] for key, df in charge_dict.items()}
+
+    # Add deltaV to the 'c' DataFrame
+    c['dV'] = pd.Series(deltaV).reset_index()[0]
+
+    # Filter out entries that meet the condition of dV > 5 and Duration > 600
+    charge_list = c.query('dV > 5 and `Duration [s]` > 600')["Drive Cycle ID"].to_list()
+
+    # Create the filtered dictionary by iterating over charge_list
+    filtered_dict_new = {}
+
+    # Loop through each item in charge_list to filter based on dI values starting from the second row
+    for i in charge_list:
+        # Start checking from the second row (index 1) to avoid modifying the first row
+        df_subset = charge_dict[i].iloc[1:]  # This excludes the first row
+        
+        # Find the first occurrence where 'dI' is outside the range (-0.026, 0.026)
+        first_occurrence_index = df_subset[(df_subset['dI'] < -0.026) | (df_subset['dI'] > 0.026)].index.min()
+
+        # If an occurrence is found, filter the DataFrame up to that index
+        if pd.notna(first_occurrence_index):
+            df_filtered = charge_dict[i].loc[:first_occurrence_index-1]
+        else:
+            df_filtered = charge_dict[i]  # If no occurrence, keep the original DataFrame
+
+        # Store the filtered DataFrame in the new dictionary
+        filtered_dict_new[i] = df_filtered
+
+    # Calculate the mean current from the filtered DataFrames
+    c_mean = {key: df['Current'].mean() for key, df in filtered_dict_new.items()}
+
+    # Calculate the overall mean charge current and normalize by Q_pack
+    return np.mean(list(c_mean.values()))
+
+def pybamm_plot(experiment):
+    sim = pybamm.Simulation(model=pybamm.lithium_ion.SPM(), experiment=pybamm.Experiment(experiment), solver = pybamm.IDAKLUSolver())
+    sol = sim.solve(initial_soc=1)
+
+    time = sol["Time [s]"].entries
+    current = sol["Current [A]"].entries
+    voltage = sol["Terminal voltage [V]"].entries
+
+    fig = make_subplots(rows=2, cols=1, subplot_titles=('Current Over Time', 'Voltage Over Time'))
+
+    # Left subplot: Current
+    fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', line=dict(color='blue')), row=1, col=1)
+
+    # Right subplot: Voltage
+    fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', line=dict(color='red')), row=2, col=1)
+
+    # Update layout for the figure
+    fig.update_layout(
+        title_text='Current and Voltage Over Time',
+        xaxis_title_text='Time [s]',
+        height=600,  # Adjust the height to fit the subplots
+        showlegend=False
+    )
+
+    # Update axis labels for the individual subplots
+    fig.update_xaxes(title_text="Time [s]", row=1, col=1)
+    fig.update_yaxes(title_text="Current [A]", row=1, col=1)
+    fig.update_xaxes(title_text="Time [s]", row=1, col=2)
+    fig.update_yaxes(title_text="Voltage [V]", row=1, col=2)
+
+    # Display the plot in Streamlit
+    st.plotly_chart(fig, use_container_width=True)
