@@ -7,14 +7,14 @@ import numpy as np
 
 
 def current_rate_calc(data_all, dc_all):
-    cycle_status = {key: 'charge' if (np.mean(df['Current']) >= 0) else 'discharge' for key, df in dc_all.items()}
+    cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in dc_all.items()}
 
     charge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'charge'}
     discharge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'discharge' and k not in [3, 4]}
 
     Q_pack = 11
     I_discharge = np.round(np.abs(pd.Series([df['Current'].mean() for df in discharge_dict.values()]).mean())/Q_pack,1)
-    I_charge = np.round(charge_rate(charge_dict)/Q_pack,1)
+    I_charge = np.round(abs(charge_rate(charge_dict)/Q_pack),1)
 
     time_discharge = stats_calc(discharge_dict)["Duration [s]"].sum()
     time_charge = stats_calc(charge_dict)["Duration [s]"].sum()
@@ -35,7 +35,7 @@ def app():
     st.write('### Basic Charge-Discharge Profile')
     st.write('The following pybamm experiment definition will cycle the battery between 0% and 100% SOC at the average C-Rates from the filtered field data. Discharge rate is taken as the average current during discharge and charge rate is calculated as the average current during the constant current portion of charge.')
     simple_exp = [
-        "Discharge at "+ str(I_discharge) +"C until 2.5 V",
+        "Discharge at "+ str(I_discharge) +"C until 3 V",
         "Charge at "+ str(I_charge) +"C until 4.2 V",
         "Hold at 4.2 V until 50 mA"]
     
@@ -63,10 +63,10 @@ def app():
     total_time = np.round(discharge_time / (time_data['Discharge']/time_data.sum(axis=0)),2)
 
     simple_rest = [
-        "Discharge at "+ str(I_discharge) +"C until 2.5 V",
+        "Discharge at "+ str(I_discharge) +"C until 3 V",
         "Charge at "+ str(I_charge) +"C until 4.2 V",
         "Hold at 4.2 V until 50 mA",
-        "Rest for "+ str(total_time) +" hours"]
+        "Rest for "+ str(total_time) +" hours (60 minute period)"]
 
     formatted_simple_rest = ',\n        '.join(f'"{step}"' for step in simple_rest)
     st.markdown(f"""

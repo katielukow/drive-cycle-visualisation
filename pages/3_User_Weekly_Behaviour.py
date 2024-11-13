@@ -1,11 +1,10 @@
 import streamlit as st
 import plotly.graph_objects as go
-import plotly.colors as pc
 import pandas as pd
 import numpy as np
 import pybamm
-import matplotlib.pyplot as plt
-from data_analysis import load_data, stats_calc, user_power_division, riding_events_power
+from plotly.subplots import make_subplots
+from data_analysis import load_data, stats_calc, user_power_division, riding_events_power, user_stat, charge_rate
 
 @st.cache_data
 def prepare_data():
@@ -23,9 +22,9 @@ def prepare_data():
     user_all['Day of Week'] = user_all['Date'].dt.day_name()
 
     day_behaviour = user_all[["Day of Week", "Drive Cycle ID", "Mean Power [W]"]].copy()
-    day_behaviour['ID'] = np.where(day_behaviour['Mean Power [W]'] > 0, 'charge', 'discharge')
+    day_behaviour['ID'] = np.where(day_behaviour['Mean Power [W]'] < 0, 'charge', 'discharge')
 
-    stats_discharge = stats_all[stats_all["Mean Power [W]"] < 0]
+    stats_discharge = stats_all[stats_all["Mean Power [W]"] > 0]
 
     df_temps = stats_discharge[['Drive Cycle ID', 'High_P', 'Medium_P', 'Low_P']]
     violin_df = pd.melt(df_temps, id_vars=['Drive Cycle ID'], 
@@ -68,7 +67,7 @@ def weekly_count(user_all):
     return mean_charge, mean_discharge
 
 def mean_cycles(filtered_dict_I):
-    cycle_status = {key: 'charge' if (df['Current'] >= 0).all() else 'discharge' for key, df in filtered_dict_I.items()}
+    cycle_status = {key: 'charge' if (df['Current'] <= 0).all() else 'discharge' for key, df in filtered_dict_I.items()}
     charge_dict = {k: v for k, v in filtered_dict_I.items() if cycle_status[k] == 'charge'}
     discharge_dict = {k: v for k, v in filtered_dict_I.items() if cycle_status[k] == 'discharge'}
     stats_charge = stats_calc(charge_dict)
@@ -101,21 +100,19 @@ def create_commute_experiment(commute_days):
 
     # Start with an empty list to hold the sequence of subcycles
     commuteP = []
-    
+
     # Append subcycle_commuteP and subcycle_rest for each commute day
     if commute_days < 4:
         for _ in range(commute_days):
             commuteP.extend(subcycle_commuteP)
             commuteP.extend(subcycle_rest)
+        remaining_days = 7 - commute_days * 2 - 1
+        commuteP.extend(subcycle_rest * remaining_days)
+
     else:
         for _ in range(commute_days):
             commuteP.extend(subcycle_commuteP)
-
-
-    # If the total cycle length is less than 7, fill remaining days with rest
-    total_cycles = commute_days + 1  # Commute days + 1 charge day
-    if total_cycles < 7:
-        remaining_days =  7 - total_cycles
+        remaining_days = 7 - commute_days - 1
         commuteP.extend(subcycle_rest * remaining_days)
     
     commuteP.extend(subcycle_charge)
@@ -188,21 +185,19 @@ def load_profile(charge_df, discharge_df, mean_charge, mean_discharge):
 def app():
     st.title('User Behaviour')
     dc_all_fil, data_all, dc_all = load_data()
-    cycle_status = {key: 'charge' if (np.mean(df['Current']) >= 0) else 'discharge' for key, df in dc_all.items()}
+    cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in dc_all.items()}
 
     # Calculate statistics once
     charge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'charge'}
-    discharge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'discharge'}
-    del discharge_dict[3] # remove the drive cycle with ID 3 as it is an outlier
-    del discharge_dict[4] # remove the drive cycle with ID 4 as it is an outlier
+    discharge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'discharge' and k not in [3, 4]}
     
     Q_pack = 11
 
-    discharge_fil = {key: df for key, df in discharge_dict.items() if ((df['Current'] <= 1)).all()}
+    discharge_fil = {key: df for key, df in discharge_dict.items() if ((df['Current'] >= -1)).all()}
     power_data = np.concatenate([discharge_fil[i]['Power'] for i in discharge_fil])
     current_data = np.concatenate([discharge_fil[i]['Current'] for i in discharge_fil])
-    power_data = power_data[power_data < 0]
-    current_data = current_data[current_data < 0]
+    power_data = power_data[power_data > 0]
+    current_data = current_data[current_data > 0]
 
     bins_I, hist_I = user_power_division(current_data, False)
     bins_P, hist_P = user_power_division(power_data, False) 
@@ -236,27 +231,6 @@ def app():
     # Calculate proportions
     sum_data_per = sum_data / sum_data.sum()
 
-    # fig_hist = go.Figure()
-    # fig_hist.add_trace(go.Histogram(x=power_data, nbinsx=100, histnorm='probability density'))
-    # fig_hist.update_layout(
-    #     title='Power Distribution',
-    #     xaxis_title='Power [W]',
-    #     yaxis_title='Probability Density',
-    #     height=600,
-    # )
-
-
-
-    # User-set values for current categories
-    # I_values = {
-    #     'High_I': I_bins[0].mean(),
-    #     'Medium_I': I_bins[1].mean(),
-    #     'Low_I': I_bins[2].mean(),
-    #     'Charge_I': 4
-    # }
-    # fig = go.Figure(data=[go.Pie(labels=['High', 'Medium', 'Low', 'Charge','Off'], values=sum_data[['P_high', 'P_mid', 'P_low', 'P_charge','Off']])])
-    # st.plotly_chart(fig, use_container_width=True)
-
     stats_all = stats_calc(dc_all)
     stats_all['Date'] = pd.to_datetime(stats_all['Date'])
     stats_all['Day of Week'] = stats_all['Date'].dt.day_name()
@@ -272,7 +246,8 @@ def app():
     user_all_charge = stats_all[stats_all.index.isin(charge_dict.keys())]
     user_all_discharge = stats_all[stats_all.index.isin(discharge_dict.keys())]
 
-    # Initialize the days_data array
+    start_date = pd.Timestamp('2023-10-01').week
+    end_date = pd.Timestamp('2023-12-01').week
     days_data_charge = np.zeros((52, 7), dtype=int)
     days_data_discharge = np.zeros((52,7), dtype=int)
 
@@ -285,9 +260,10 @@ def app():
         unique_indices = group['weekday_index'].unique()
         days_data_discharge[week_number - 1, unique_indices] = 1
 
-    # Compute the mean of the sum across rows
-    mean_charge = round(np.mean(np.sum(days_data_charge, axis=1)))
-    mean_discharge = round(np.mean(np.sum(days_data_discharge, axis=1)))
+    days_data_discharge = days_data_discharge[start_date:end_date]
+    days_data_charge = days_data_charge[start_date:end_date]
+    days_discharge = np.sum(days_data_discharge, axis=1)
+    mean_discharge = round(np.mean(days_discharge[days_discharge != 0]))
 
     stats_charge = stats_calc(charge_dict)
     stats_discharge = stats_calc(discharge_dict)
@@ -306,132 +282,202 @@ def app():
     discharge_df = dc_all[discharge_ID][["DateTime", "Current", "Voltage"]]
     discharge_df["Time"] = (discharge_df["DateTime"] - discharge_df["DateTime"].iloc[0]).dt.total_seconds()
 
-    st.write("The average number of days the asset is used for discharging is", mean_discharge)
+    st.write("The average number of days the asset is used for discharging is", mean_discharge,". We take the mean only from weeks where the asset is used.")
     commuting_days = st.slider("Number of Commute Days", 1, 6, mean_discharge)
-    commuteP = create_commute_experiment(commuting_days)
+    
 
 
-    I_charge = pd.Series([df['Current'].mean() for df in charge_dict.values()]).mean()
-    I_charge = np.round(I_charge / Q_pack,1)
+    I_charge = np.round(abs(charge_rate(charge_dict)/ Q_pack),1)
 
     step_per = pwr_discharge.mean(axis=0)
     t_total = 0.5*60*60
-    t_h = step_per.P_high * t_total
-    t_m = step_per.P_mid * t_total
-    t_l = step_per.P_low * t_total
+    t_h = int(step_per.P_high * t_total)
+    t_m = int(step_per.P_mid * t_total)
+    t_l = int(step_per.P_low * t_total)
 
-    I_h = np.abs(np.mean(bins_I[0]))/Q_pack
-    I_m = np.abs(np.mean(bins_I[1]))/Q_pack
-    I_l = np.abs(np.mean(bins_I[2]))/Q_pack
-
+    I_h = np.round(np.abs(np.mean(bins_I[0]))/Q_pack,2)
+    I_m = np.round(np.abs(np.mean(bins_I[1]))/Q_pack,2)
+    I_l = np.round(np.abs(np.mean(bins_I[2]))/Q_pack,2)
     discharge_days = np.sum(days_data_discharge, axis=1)
 
     fig_days = go.Figure()
-    fig_days.add_trace(go.Histogram(x=discharge_days, histnorm='probability density'))
+    fig_days.add_trace(go.Histogram(
+        x=discharge_days,
+        nbinsx=8,
+        xbins=dict(start=-0.5, end=7.5, size=1),
+        marker=dict(line=dict(color='white', width=3))
+    ))
     fig_days.update_layout(
         title='Discharge Days per Week',
         xaxis_title='Number of Discharge Days',
-        yaxis_title='Probability Density',
+        yaxis_title='Count',  # Update y-axis title to 'Count'
         height=600,
     )
+
     st.plotly_chart(fig_days, use_container_width=True)
 
     st.write("The first experiment we create is a weekly representative load profile with the stepped load from before.")
 
-
-    st.markdown(f'''
-    ```python
-    subcycle_commuteP = ["Rest for 8 hours (30 minute period)", 
-                        "Discharge at {I_l:.2f} C for {t_l:.0f} seconds or until 2.5 V",
-                        "Discharge at {I_m:.2f} C for {t_m:.0f} seconds or until 2.5 V",
-                        "Discharge at {I_h:.2f} C for {t_h:.0f} seconds or until 2.5 V", 
+    subcycle_commute = ["Rest for 8 hours (30 minute period)", 
+                        "Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 3 V",
+                        "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 3 V",
+                        "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 3 V", 
                         "Rest for 8 hours (30 minute period)", 
-                        "Discharge at {I_l:.2f} C for {t_l:.0f} seconds or until 2.5 V",
-                        "Discharge at {I_m:.2f} C for {t_m:.0f} seconds or until 2.5 V",
-                        "Discharge at {I_h:.2f} C for {t_h:.0f} seconds or until 2.5 V",
+                        "Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 3 V",
+                        "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 3 V",
+                        "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 3 V", 
                         "Rest for 8 hours (30 minute period)"
                         ]
 
     subcycle_charge = ["Rest for 12 hours (30 minute period)", 
-                    "Charge at {I_charge:.2f}C for 2 hours or until 4.2 V",
+                    "Charge at " + str(I_charge) + "C until 4.2 V",
                     "Hold at 4.2 V until 50 mA",
                     "Rest for 10 hours (30 minute period)"
                     ]
 
     subcycle_rest = ["Rest for 24 hours (60 minute period)",]
+    commuteP = create_commute_experiment(commuting_days)
+    
 
-    subcycle_short_rest = ["Rest for 8 hours (30 minute period)",]
+
+    st.markdown(f'''
+    ```python
+    subcycle_commute = {subcycle_commute}
+
+    subcycle_charge = {subcycle_charge}
+
+    subcycle_rest = {subcycle_rest}
 
     commuteP = {commuteP}
 
-    exp = pybamm.Experiment([commuteP] * subcycle_number)''', unsafe_allow_html=True)
+    exp = pybamm.Experiment([commuteP])
+    ''')
+
 
 
     # Add a button
     if st.button('Run PyBaMM Simulation'):
-        # PyBaMM script that runs when the button is pressed
-        st.write(I_charge)
-        model = pybamm.lithium_ion.SPM()  # You can replace this with your specific PyBaMM model
-        subcycle_commuteP = ["Rest for 8 hours (30 minute period)", 
-                            "Discharge at " + str(I_l) + "C for " + str(t_l) + "seconds or until 2.5 V",
-                            "Discharge at " + str(I_m) + "C for " + str(t_m) + "seconds or until 2.5 V",
-                            "Discharge at " + str(I_h) + "C for " + str(t_h) + "seconds or until 2.5 V", 
-                            "Rest for 8 hours (30 minute period)", 
-                            "Discharge at " + str(I_l) + "C for " + str(t_l) + "seconds or until 2.5 V",
-                            "Discharge at " + str(I_m) + "C for " + str(t_m) + "seconds or until 2.5 V",
-                            "Discharge at " + str(I_h) + "C for " + str(t_h) + "seconds or until 2.5 V", 
-                            "Rest for 8 hours (30 minute period)"
-                            ]
 
-        subcycle_charge = ["Rest for 12 hours (30 minute period)", 
-                        "Charge at " + str(I_charge) + "C for 2 hours or until 4.2 V",
-                        "Hold at 4.2 V until 50 mA",
-                        "Rest for 10 hours (30 minute period)"
-                        ]
+        model = pybamm.lithium_ion.SPM()
+        sim = pybamm.Simulation(model, experiment=pybamm.Experiment([(*subcycle_commute, *subcycle_commute, *subcycle_commute, *subcycle_commute, *subcycle_rest, *subcycle_rest, *subcycle_charge)]), solver=pybamm.IDAKLUSolver())
 
-        subcycle_rest = ["Rest for 24 hours (60 minute period)",]
-
-        commute = (*subcycle_commuteP, *subcycle_rest, *subcycle_commuteP, *subcycle_rest, *subcycle_commuteP, *subcycle_rest, *subcycle_charge)
-
-        exp = pybamm.Experiment([commute])
-
-        # Create the simulation
-        sim = pybamm.Simulation(model, experiment=exp)
-
-        # Solve the simulation
         sol = sim.solve()
-
-    # Step 4: Extract voltage and current
         time = sol["Time [s]"].entries
         current = sol["Current [A]"].entries
         voltage = sol["Terminal voltage [V]"].entries
 
-        # Step 5: Create a Plotly figure with dual y-axes
-        fig = go.Figure()
+        fig = make_subplots(rows=2, cols=1, subplot_titles=('Current Over Time', 'Voltage Over Time'))
 
-        # Left y-axis: Current
-        fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', yaxis='y1', line=dict(color='blue')))
+        # Left subplot: Current
+        fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', line=dict(color='blue')), row=1, col=1)
 
-        # Right y-axis: Voltage
-        fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', yaxis='y2', line=dict(color='red')))
+        # Right subplot: Voltage
+        fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', line=dict(color='red')), row=2, col=1)
 
-        # Step 6: Set up the layout with two y-axes
+        # Update layout for the figure
         fig.update_layout(
-            title='Current and Voltage Over Time',
-            xaxis=dict(title='Time [s]'),
-            yaxis=dict(title='Current [A]', titlefont=dict(color='blue'), tickfont=dict(color='blue')),
-            yaxis2=dict(title='Voltage [V]', titlefont=dict(color='red'), tickfont=dict(color='red'), anchor='x', overlaying='y', side='right'),
-            legend=dict(x=0.1, y=0.9)
+            title_text='Current and Voltage Over Time',
+            xaxis_title_text='Time [s]',
+            height=600,  # Adjust the height to fit the subplots
+            showlegend=False
         )
 
-        # Step 7: Display the plot in Streamlit
+        # Update axis labels for the individual subplots
+        fig.update_xaxes(title_text="Time [s]", row=1, col=1)
+        fig.update_yaxes(title_text="Current [A]", row=1, col=1)
+        fig.update_xaxes(title_text="Time [s]", row=2, col=1)
+        fig.update_yaxes(title_text="Voltage [V]", row=2, col=1)
+
+        # Display the plot in Streamlit
+        st.plotly_chart(fig, use_container_width=True)
+    
+    st.write("The load profile can be taken one step further where a dynamic load profile can be extracted from the raw data and replace the stepped profile. Initially, a load profile is taken from the selection as representative through the energy used. Mean energy is calculated and the drive cycle with a energy clsoest to the mean is selected. The next page will further investigate the selection of this drive cycle and other methods to determine the representivity of the load profile.")
+    
+    discharge_df['Power'] = (discharge_df['Voltage']/10)*(discharge_df['Current']/4) # Power = V*I (W). Negative sign to match pybamm syntax. 
+    data_temp = discharge_df[['Time', 'Power']]
+    data_temp['Power'].iloc[0]  = 0
+
+    dT = 2.3
+    normal_time = np.arange(0, data_temp['Time'].max(), dT)
+    power_interp = np.interp(normal_time, data_temp['Time'], data_temp['Power']*.8)
+    normalized_power = pd.DataFrame({'Time': normal_time, 'Power': power_interp})
+    # Convert DataFrame directly to CSV format
+    csv_data = normalized_power.to_csv(index=False)
+
+    # Create the download button
+    st.download_button(
+        label="Download Normalized Power Data",
+        data=csv_data,
+        file_name='normalized_power.csv',
+        mime='text/csv'
+    )
+
+    step_P = pybamm.step.power(value=normalized_power.values, duration="720 seconds", termination="3.0 V")
+
+    subcycle_commuteP = ["Rest for 8 hours (30 minute period)", 
+                        step_P, 
+                        "Rest for 8 hours (30 minute period)", 
+                        step_P,
+                        "Rest for 8 hours (30 minute period)"
+                        ]
+
+    st.markdown(f'''
+    ```python
+    normalized_power = pd.read_csv("normalized_power.csv")
+      
+    step_P = pybamm.step.power(value=normalized_power.values, duration="720 seconds", termination="3.0 V")
+    
+    subcycle_commuteP = ["Rest for 8 hours (30 minute period)", 
+                        step_P, 
+                        "Rest for 8 hours (30 minute period)", 
+                        step_P,
+                        "Rest for 8 hours (30 minute period)"
+                        ]
+
+    subcycle_charge = {subcycle_charge}
+
+    subcycle_rest = {subcycle_rest}
+
+    commuteP = {commuteP}
+
+    exp = pybamm.Experiment([commuteP])
+    ''')
+
+    if st.button('Run PyBaMM Simulation with Normalized Power Data'):
+
+        model = pybamm.lithium_ion.SPM()
+        sim = pybamm.Simulation(model, experiment=pybamm.Experiment([(*subcycle_commuteP, *subcycle_commuteP, *subcycle_commuteP, *subcycle_commuteP, *subcycle_rest, *subcycle_rest, *subcycle_charge)]), solver=pybamm.IDAKLUSolver())
+
+        sol = sim.solve()
+        time = sol["Time [s]"].entries
+        current = sol["Current [A]"].entries
+        voltage = sol["Terminal voltage [V]"].entries
+
+        fig = make_subplots(rows=2, cols=1, subplot_titles=('Current Over Time', 'Voltage Over Time'))
+
+        # Left subplot: Current
+        fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', line=dict(color='blue')), row=1, col=1)
+
+        # Right subplot: Voltage
+        fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', line=dict(color='red')), row=2, col=1)
+
+        # Update layout for the figure
+        fig.update_layout(
+            title_text='Current and Voltage Over Time',
+            xaxis_title_text='Time [s]',
+            height=600,  # Adjust the height to fit the subplots
+            showlegend=False
+        )
+
+        # Update axis labels for the individual subplots
+        fig.update_xaxes(title_text="Time [s]", row=1, col=1)
+        fig.update_yaxes(title_text="Current [A]", row=1, col=1)
+        fig.update_xaxes(title_text="Time [s]", row=2, col=1)
+        fig.update_yaxes(title_text="Voltage [V]", row=2, col=1)
+
+        # Display the plot in Streamlit
         st.plotly_chart(fig, use_container_width=True)
 
-
-
-
-
-    
 
 
 if __name__ == "__main__":

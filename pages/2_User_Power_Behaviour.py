@@ -22,9 +22,9 @@ def prepare_data():
     user_all['Day of Week'] = user_all['Date'].dt.day_name()
 
     day_behaviour = user_all[["Day of Week", "Drive Cycle ID", "Mean Power [W]"]].copy()
-    day_behaviour['ID'] = np.where(day_behaviour['Mean Power [W]'] > 0, 'charge', 'discharge')
+    day_behaviour['ID'] = np.where(day_behaviour['Mean Power [W]'] < 0, 'charge', 'discharge')
 
-    stats_discharge = stats_all[stats_all["Mean Power [W]"] < 0]
+    stats_discharge = stats_all[stats_all["Mean Power [W]"] > 0]
 
     df_temps = stats_discharge[['Drive Cycle ID', 'High_P', 'Medium_P', 'Low_P']]
     violin_df = pd.melt(df_temps, id_vars=['Drive Cycle ID'], 
@@ -37,7 +37,7 @@ def prepare_data():
 def app():
     st.title('User Behaviour')
     dc_all_fil, data_all, dc_all = load_data()
-    cycle_status = {key: 'charge' if (np.mean(df['Current']) >= 0) else 'discharge' for key, df in dc_all.items()}
+    cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in dc_all.items()}
 
     # Calculate statistics once
     charge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'charge'}
@@ -47,11 +47,11 @@ def app():
     
     Q_pack = 11
 
-    discharge_fil = {key: df for key, df in discharge_dict.items() if ((df['Current'] <= 1)).all()}
+    discharge_fil = {key: df for key, df in discharge_dict.items() if ((df['Current'] >= -1)).all()}
     power_data = np.concatenate([discharge_fil[i]['Power'] for i in discharge_fil])
     current_data = np.concatenate([discharge_fil[i]['Current'] for i in discharge_fil])
-    power_data = power_data[power_data < 0]
-    current_data = current_data[current_data < 0]
+    power_data = power_data[power_data > 0]
+    current_data = current_data[current_data > 0]
 
     bins_I, hist_I = user_power_division(current_data, False)
     bins_P, hist_P = user_power_division(power_data, False) 
@@ -84,24 +84,24 @@ def app():
     # sum_data_per = sum_data / sum_data.sum()
 
     fig_hist = go.Figure()
-    fig_hist.add_trace(go.Histogram(x=power_data, nbinsx=100, histnorm='probability density'))
+    fig_hist.add_trace(go.Histogram(x=power_data, nbinsx=100))
     fig_hist.update_layout(
         title='Power Distribution',
         xaxis_title='Power [W]',
-        yaxis_title='Probability Density',
+        yaxis_title='Counts',
         height=600,
     )
     # Add vertical line at x = -245
     fig_hist.add_shape(
         type="line",
         x0=bins_P[1][0], x1=bins_P[1][0],  # x-position of the vertical line
-        y0=0, y1=0.055,  # y-position (from 0 to max y-axis value)
+        y0=0, y1=100000,  # y-position (from 0 to max y-axis value)
         line=dict(color="red", width=2, dash="dash")  # Customize line appearance
     )
     fig_hist.add_shape(
         type="line",
         x0=bins_P[2][0], x1=bins_P[2][0],  # x-position of the vertical line
-        y0=0, y1=0.055,  # y-position (from 0 to max y-axis value)
+        y0=0, y1=100000,  # y-position (from 0 to max y-axis value)
         line=dict(color="red", width=2, dash="dash")  # Customize line appearance
     )
     st.plotly_chart(fig_hist, use_container_width=True)
@@ -143,7 +143,7 @@ def app():
 
     st.write("Combining this information with the preprocessing data, we can develop a stepped load profile to take in to account this power division. The following pybamm experiment definition presents this load profile.")
 
-    I_charge = np.round(charge_rate(charge_dict)/ Q_pack,1)
+    I_charge = np.round(abs(charge_rate(charge_dict)/ Q_pack),1)
     step_per = pwr_discharge.mean(axis=0)
     t_total = 0.5*60*60
     t_h = int(step_per.P_high * t_total)
@@ -154,9 +154,9 @@ def app():
     I_m = np.round(np.abs(np.mean(bins_I[1]))/Q_pack,2)
     I_l = np.round(np.abs(np.mean(bins_I[2]))/Q_pack,2)
 
-    no_rest_exp = ["Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 2.5 V",
-                            "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 2.5 V",
-                            "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 2.5 V",
+    no_rest_exp = ["Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 3 V",
+                            "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 3 V",
+                            "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 3 V",
                             "Charge at " + str(I_charge) + "C until 4.2 V",
                             "Hold at 4.2 V until 50 mA"
                             ]
@@ -187,12 +187,12 @@ def app():
     t_r = int(t_off * t_total)
     
     rest_exp = [
-        "Discharge at " + str(I_l) + "C for " + str(t_l) + "seconds or until 2.5 V",
-        "Discharge at " + str(I_m) + "C for " + str(t_m) + "seconds or until 2.5 V",
-        "Discharge at " + str(I_h) + "C for " + str(t_h) + "seconds or until 2.5 V",
+        "Discharge at " + str(I_l) + "C for " + str(t_l) + "seconds or until 3 V",
+        "Discharge at " + str(I_m) + "C for " + str(t_m) + "seconds or until 3 V",
+        "Discharge at " + str(I_h) + "C for " + str(t_h) + "seconds or until 3 V",
         "Charge at " + str(I_charge) + "C until 4.2 V",
         "Hold at 4.2 V until 50 mA",
-        "Rest for " + str(t_r) + " seconds"]
+        "Rest for " + str(t_r) + " seconds (60 minute period)"]
     
     formatted_rest = ',\n        '.join(f'"{step}"' for step in rest_exp)
     st.markdown(f"""

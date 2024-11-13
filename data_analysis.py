@@ -2,7 +2,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
-from scipy.signal import savgol_filter
 from datetime import datetime, timedelta
 import calendar
 from scipy.signal import find_peaks
@@ -42,19 +41,21 @@ def load_data():
     max_Vp = 42 # assumed max operating voltage of the pack
     min_Vp = 25 # assumed min operating voltage of the pack
     Q_pack = 11 # capacity of the pack in Ah
-    I_max = 6 # max current of the pack in A
-    I_min = -30 # min current of the pack in A
+    I_max = 30 # max current of the pack in A
+    I_min = -6 # min current of the pack in A
     csv = pd.read_parquet('../data/20240122-Data.parquet')
     df_init = data_init(csv)
+    df_init = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-12-01 00:00:00')].copy()
     # df_all = datetime_corr(df_init)
     df_init['Time_of_Day'] = df_init['DateTime'].dt.strftime('%p')
+    df_init['Current'] = df_init['Current'] * -1
     df_init['Power'] = df_init['Current'] * df_init['Voltage']
 
     # df_temp = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-11-01 00:00:00')].copy()
     # dc_all = drive_cycle_id(df_init, 60) 
 
     data_filtered = df_init[(df_init["Current"] > I_min) & (df_init["Current"] < I_max) & (df_init['Voltage'] >= min_Vp)]
-    data_filtered["Power"] = data_filtered['Current'] * data_filtered['Voltage']
+    # data_filtered["Power"] = data_filtered['Current'] * data_filtered['Voltage']
     dc_all = drive_cycle_id(data_filtered, 60) 
 
     filtered_dict_V = {key: df for key, df in dc_all.items() if (df['Voltage'] >= min_Vp).all()} 
@@ -172,15 +173,15 @@ def drive_cycle_id(data, t_delta):
     return dc
 
 def riding_events(data, bins):
-    idle = [bins[2][0], bins[2][1]]
+    accel = [bins[2][0], bins[2][1]]
     coast = [bins[1][0], bins[1][1]]
-    accel = [bins[0][0], bins[0][1]]
+    idle = [bins[0][0], bins[0][1]]
 
-    # data = dc[0]
-    conditions = [data.Current > 0, 
+
+    conditions = [data.Current < 0, 
                 np.logical_and(idle[0] < data.Current, data.Current < idle[1]), 
                 np.logical_and(coast[0] < data.Current, data.Current < coast[1]), 
-                data.Current <= accel[1]]
+                data.Current >= accel[0]]
     values = [0, 1, 2, 3]
 
     time = np.asarray(data.DateTime.diff().dt.total_seconds().copy()) # time in seconds
@@ -205,15 +206,15 @@ def riding_events(data, bins):
     return [accel_time, coast_time, idle_time, total_time, charge_time]
 
 def riding_events_power(data,  bins):
-    idle = [bins[2][0], bins[2][1]]
+    accel = [bins[2][0], bins[2][1]]
     coast = [bins[1][0], bins[1][1]]
-    accel = [bins[0][0], bins[0][1]]
+    idle = [bins[0][0], bins[0][1]]
 
     power = data['Current'] * data['Voltage']
-    conditions = [power > 0, 
+    conditions = [power < 0, 
                 np.logical_and(idle[0] < power, power < idle[1]), 
                 np.logical_and(coast[0] < power, power < coast[1]), 
-                power <= accel[1]]
+                power >= accel[0]]
     values = [0, 1, 2, 3]
 
     time = np.asarray(data.DateTime.diff().dt.total_seconds().copy()) # time in seconds
@@ -434,17 +435,18 @@ def charge_rate(charge_dict):
     return np.mean(list(c_mean.values()))
 
 def pybamm_plot(experiment):
-    sim = pybamm.Simulation(model=pybamm.lithium_ion.SPM(), experiment=pybamm.Experiment(experiment), solver = pybamm.IDAKLUSolver())
+    param = pybamm.ParameterValues("Chen2020")
+    sim = pybamm.Simulation(model=pybamm.lithium_ion.SPM(), parameter_values=param, experiment=pybamm.Experiment(experiment), solver = pybamm.IDAKLUSolver())
     sol = sim.solve(initial_soc=1)
 
     time = sol["Time [s]"].entries
-    current = sol["Current [A]"].entries
+    current = sol["Current [A]"].entries / param['Nominal cell capacity [A.h]']
     voltage = sol["Terminal voltage [V]"].entries
 
     fig = make_subplots(rows=2, cols=1, subplot_titles=('Current Over Time', 'Voltage Over Time'))
 
     # Left subplot: Current
-    fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='Current [A]', line=dict(color='blue')), row=1, col=1)
+    fig.add_trace(go.Scatter(x=time, y=current, mode='lines', name='C-Rate', line=dict(color='blue')), row=1, col=1)
 
     # Right subplot: Voltage
     fig.add_trace(go.Scatter(x=time, y=voltage, mode='lines', name='Voltage [V]', line=dict(color='red')), row=2, col=1)
@@ -459,9 +461,9 @@ def pybamm_plot(experiment):
 
     # Update axis labels for the individual subplots
     fig.update_xaxes(title_text="Time [s]", row=1, col=1)
-    fig.update_yaxes(title_text="Current [A]", row=1, col=1)
-    fig.update_xaxes(title_text="Time [s]", row=1, col=2)
-    fig.update_yaxes(title_text="Voltage [V]", row=1, col=2)
+    fig.update_yaxes(title_text="C-Rate", row=1, col=1)
+    fig.update_xaxes(title_text="Time [s]", row=2, col=1)
+    fig.update_yaxes(title_text="Voltage [V]", row=2, col=1)
 
     # Display the plot in Streamlit
     st.plotly_chart(fig, use_container_width=True)
