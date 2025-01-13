@@ -19,12 +19,5 @@ def load_module(module_name, filepath):
 page_files = [f for f in os.listdir(PAGES_DIR) if f.endswith('.py')]
 pages = {f.replace('.py', '').replace('_', ' ').title(): os.path.join(PAGES_DIR, f) for f in page_files}
 
-st.sidebar.title('Navigation')
-selection = st.sidebar.radio('Go to', list(pages.keys()))
-
-# Load and display the selected page
-page = load_module(selection, pages[selection])
-if hasattr(page, 'app'):
-    page.app()
-else:
-    st.error(f'The page {selection} does not have an `app` function.')
+main_page = '0 Trip Visualisation'
+load_module(main_page, pages[main_page]).app()

@@ -9,6 +9,8 @@ from plotly.subplots import make_subplots
 import pybamm
 import plotly.graph_objects as go
 
+file_path = '../data/20240122-Data.parquet'
+
 # Fix date-time formatting (this should be fixed in the arduino code...)
 def data_init(df):
     df.rename(columns={"Time": "DateTime"}, inplace=True)
@@ -43,7 +45,7 @@ def load_data():
     Q_pack = 11 # capacity of the pack in Ah
     I_max = 30 # max current of the pack in A
     I_min = -6 # min current of the pack in A
-    csv = pd.read_parquet('../data/20240122-Data.parquet')
+    csv = pd.read_parquet(file_path)
     df_init = data_init(csv)
     df_init = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-12-01 00:00:00')].copy()
     # df_all = datetime_corr(df_init)
