@@ -9,7 +9,7 @@ from plotly.subplots import make_subplots
 import pybamm
 import plotly.graph_objects as go
 
-file_path = '../data/20240122-Data.parquet'
+
 
 # Fix date-time formatting (this should be fixed in the arduino code...)
 def data_init(df):
@@ -25,9 +25,6 @@ def datetime_corr(df):
     df['DateTime'] = pd.to_datetime(df['DateTime'])
     df['Date'] = pd.to_datetime(df['DateTime']).dt.date
     df['Date'] = pd.to_datetime(df['Date'])
-    # df['dt'] = df.DateTime.diff()  /  pd.Timedelta(minutes=1) * 60
-    # df['Time'] = pd.to_datetime(df['DateTime']).dt.time
-    # # df['Time'] = pd.to_datetime(df['Time'])
     return df
 
 def coulomb_calc(data):
@@ -38,7 +35,7 @@ def coulomb_calc(data):
     return data
 
 @st.cache_data
-def load_data():
+def load_data(file_path):
     nom_Vp = 36 # nominal voltage of the pack
     max_Vp = 42 # assumed max operating voltage of the pack
     min_Vp = 25 # assumed min operating voltage of the pack
@@ -47,7 +44,7 @@ def load_data():
     I_min = -6 # min current of the pack in A
     csv = pd.read_parquet(file_path)
     df_init = data_init(csv)
-    df_init = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-12-01 00:00:00')].copy()
+    # df_init = df_init[(df_init['DateTime'] > '2023-10-01 00:00:00') & (df_init['DateTime'] < '2023-12-01 00:00:00')].copy()
     # df_all = datetime_corr(df_init)
     df_init['Time_of_Day'] = df_init['DateTime'].dt.strftime('%p')
     df_init['Current'] = df_init['Current'] * -1
@@ -66,14 +63,8 @@ def load_data():
 
     return dc_all_fil, data_filtered, dc_all
 
-# Identify charge cycles - slightly hard coded at the moment considers the following
-# Nominal Charge Current 
-# Current is relatively constant - -0.01 < dIdt < 0.01
-# Time step is less than 1 second
-# Time step is positive
-# Charge cycle is greater than 15000 data points
 
-@st.cache_data
+# @st.cache_data
 def load_and_process_data():
     dc_all_fil, data_filtered, dc_all = load_data()
     stats_all = stats_calc(dc_all_fil)

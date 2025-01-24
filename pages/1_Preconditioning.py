@@ -4,8 +4,6 @@ from data_analysis import load_data, stats_calc, charge_rate, pybamm_plot
 import pandas as pd
 import numpy as np
 
-
-
 def current_rate_calc(data_all, dc_all):
     cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in dc_all.items()}
 
@@ -29,8 +27,8 @@ def current_rate_calc(data_all, dc_all):
 
 def app():
     st.title('Initial Data Analysis')
-    _, data_all, dc_all = load_data()
-    I_discharge, I_charge, time_data = current_rate_calc(data_all, dc_all)
+    # _, data_all, dc_all = load_data()
+    I_discharge, I_charge, time_data = current_rate_calc(st.session_state.data_all, st.session_state.dc_all)
     
     st.write('### Basic Charge-Discharge Profile')
     st.write('The following pybamm experiment definition will cycle the battery between 0% and 100% SOC at the average C-Rates from the filtered field data. Discharge rate is taken as the average current during discharge and charge rate is calculated as the average current during the constant current portion of charge.')

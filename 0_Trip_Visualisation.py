@@ -2,31 +2,29 @@ import streamlit as st
 import plotly.graph_objects as go
 from data_analysis import load_data
 import pandas as pd
-import numpy as np
 
-@st.cache_data
-def prepare_data():
-    dc_all_fil, data_all, dc_all = load_data()
+# @st.cache_data
+# def prepare_data():
+#     # Pre-compute cycle status and time in hours for each drive cycle
+#     dc_all_fil = st.session_state.dc_all_fil
     
-    # Pre-compute charge/discharge status for each drive cycle
-    cycle_status = {key: 'charge' if (df['Current'] >= 0).all() else 'discharge' for key, df in dc_all_fil.items()}
-    
-    # Pre-compute time in hours for each drive cycle
-    for df in dc_all_fil.values():
-        df['Time_Hours'] = (df['DateTime'] - df['DateTime'].iloc[0]).dt.total_seconds() / 3600
-    
-    return dc_all_fil, cycle_status, data_all
+#     # Compute cycle status and time in hours in a single loop
 
-def filter_data(dc_all_fil, cycle_status, charge, discharge):
-    if charge and discharge:
+
+#     return dc_all_fil, cycle_status, st.session_state.data_all
+
+def filter_data(dc_all_fil, cycle_status, include_charge, include_discharge):
+    # Use logical checks to filter only necessary items
+    if include_charge and include_discharge:
         return dc_all_fil
-    elif charge:
+    elif include_charge:
         return {k: v for k, v in dc_all_fil.items() if cycle_status[k] == 'charge'}
-    elif discharge:
+    elif include_discharge:
         return {k: v for k, v in dc_all_fil.items() if cycle_status[k] == 'discharge'}
     else:
         return {}
 
+@st.cache_data
 def create_figure(filtered_dict_V):
     fig = go.Figure()
     for key, df in filtered_dict_V.items():
@@ -43,21 +41,30 @@ def create_figure(filtered_dict_V):
     return fig
 
 def app():
-    dc_all_fil, cycle_status, data_all = prepare_data()
+    # Prepare data
+    # dc_all_fil, cycle_status, _ = prepare_data()
+    dc_all_fil = st.session_state.dc_all_fil
+    
+    cycle_status = {}
+    for key, df in dc_all_fil.items():
+        cycle_status[key] = 'charge' if (df['Current'] >= 0).all() else 'discharge'
+        if 'Time_Hours' not in df.columns:  # Avoid recomputing if already added
+            df['Time_Hours'] = (df['DateTime'] - df['DateTime'].iloc[0]).dt.total_seconds() / 3600
 
+    # Sidebar filters
     charge = st.sidebar.checkbox("Charge", True, key="page1_charge")
     discharge = st.sidebar.checkbox("Discharge", True, key="page1_discharge")
-    
+
+    # Filter data based on the selected options
     filtered_dict_V = filter_data(dc_all_fil, cycle_status, charge, discharge)
 
+    # Render output
     if filtered_dict_V:
         fig = create_figure(filtered_dict_V)
         st.plotly_chart(fig, use_container_width=True)
         st.write(f"Number of filtered drive cycles: {len(filtered_dict_V)}")
     else:
-        st.write("No drive cycles meet the specified criteria.")
-    
-
+        st.warning("No drive cycles meet the specified criteria.")
 
 if __name__ == "__main__":
     app()

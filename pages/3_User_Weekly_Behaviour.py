@@ -7,15 +7,11 @@ from plotly.subplots import make_subplots
 from data_analysis import load_data, stats_calc, user_power_division, riding_events_power, user_stat, charge_rate
 
 @st.cache_data
-def prepare_data():
-    filtered_dict_I, data_filtered, dc_all = load_data()
-
+def prepare_data(filtered_dict_I, data_filtered, dc_all):
     for df in filtered_dict_I.values():
         df['Power'] = df['Voltage'] * df['Current']
 
     stats_all = stats_calc(filtered_dict_I)
-    # stats_all['Date'] = pd.to_datetime(stats_all['Date'])
-    # stats_all['Day of Week'] = stats_all['Date'].dt.day_name()
 
     user_all = user_stat(dc_all)
     user_all['Date'] = pd.to_datetime(user_all['Date'])
@@ -26,12 +22,12 @@ def prepare_data():
 
     stats_discharge = stats_all[stats_all["Mean Power [W]"] > 0]
 
-    df_temps = stats_discharge[['Drive Cycle ID', 'High_P', 'Medium_P', 'Low_P']]
-    violin_df = pd.melt(df_temps, id_vars=['Drive Cycle ID'], 
-                        value_vars=['High_P', 'Medium_P', 'Low_P'],
-                        var_name='Load Type', value_name='Load')
+    # df_temps = stats_discharge[['Drive Cycle ID', 'High_P', 'Medium_P', 'Low_P']]
+    # violin_df = pd.melt(df_temps, id_vars=['Drive Cycle ID'], 
+    #                     value_vars=['High_P', 'Medium_P', 'Low_P'],
+    #                     var_name='Load Type', value_name='Load')
 
-    return filtered_dict_I, day_behaviour, violin_df, stats_all, user_all
+    return filtered_dict_I, day_behaviour, stats_all, user_all
 
 def weekly_counts(df):
     # df['year'] = pd.to_datetime(df['Date']).dt.year
@@ -80,35 +76,36 @@ def create_commute_experiment(commute_days):
         raise ValueError("The number of commute days cannot exceed 6")
     # Ensure the number of commute days does not exceed 6
     commute_days = min(commute_days, 6)
-    subcycle_commuteP = ["*subcycle_commuteP"]
+    subcycle_commute = ["*subcycle_commute"]
     subcycle_rest = ["*subcycle_rest"]
     subcycle_charge = ["*subcycle_charge"]
 
     # Start with an empty list to hold the sequence of subcycles
-    commuteP = []
+    commute = []
 
-    # Append subcycle_commuteP and subcycle_rest for each commute day
+    # Append subcycle_commute and subcycle_rest for each commute day
     if commute_days < 4:
         for _ in range(commute_days):
-            commuteP.extend(subcycle_commuteP)
-            commuteP.extend(subcycle_rest)
+            commute.extend(subcycle_commute)
+            commute.extend(subcycle_rest)
         remaining_days = 7 - commute_days * 2 - 1
-        commuteP.extend(subcycle_rest * remaining_days)
+        commute.extend(subcycle_rest * remaining_days)
 
     else:
         for _ in range(commute_days):
-            commuteP.extend(subcycle_commuteP)
+            commute.extend(subcycle_commute)
         remaining_days = 7 - commute_days - 1
-        commuteP.extend(subcycle_rest * remaining_days)
+        commute.extend(subcycle_rest * remaining_days)
     
-    commuteP.extend(subcycle_charge)
+    commute.extend(subcycle_charge)
 
-    commuteP_str = str(commuteP).replace("[", "(").replace("]", ")").replace("'", "")
-    return commuteP_str
+    commute_str = str(commute).replace("[", "(").replace("]", ")").replace("'", "")
+    return commute_str
 
 def app():
     st.title('User Behaviour')
-    dc_all_fil, data_all, dc_all = load_data()
+    # dc_all_fil, data_all, dc_all = load_data()
+    dc_all_fil, data_all, dc_all = st.session_state.dc_all_fil, st.session_state.data_all, st.session_state.dc_all
     cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in dc_all.items()}
 
     charge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'charge'}
@@ -168,7 +165,7 @@ def app():
     I_charge = np.round(abs(charge_rate(charge_dict)/ Q_pack),1)
 
     step_per = pwr_discharge.mean(axis=0)
-    t_total = 0.5*60*60
+    t_total = 500
     t_h = int(step_per.P_high * t_total)
     t_m = int(step_per.P_mid * t_total)
     t_l = int(step_per.P_low * t_total)
@@ -214,7 +211,7 @@ def app():
                     ]
 
     subcycle_rest = ["Rest for 24 hours (60 minute period)",]
-    commuteP = create_commute_experiment(commuting_days)
+    commute = create_commute_experiment(commuting_days)
 
     st.markdown(f'''
     ```python
@@ -224,9 +221,9 @@ def app():
 
     subcycle_rest = {subcycle_rest}
 
-    commuteP = {commuteP}
+    commute = {commute}
 
-    exp = pybamm.Experiment([commuteP])
+    exp = pybamm.Experiment([commute])
     ''')
 
 
@@ -290,7 +287,7 @@ def app():
 
     step_P = pybamm.step.power(value=normalized_power.values, duration="720 seconds", termination="3.0 V")
 
-    subcycle_commuteP = ["Rest for 8 hours (30 minute period)", 
+    subcycle_commute = ["Rest for 8 hours (30 minute period)", 
                         step_P, 
                         "Rest for 8 hours (30 minute period)", 
                         step_P,
@@ -303,7 +300,7 @@ def app():
       
     step_P = pybamm.step.power(value=normalized_power.values, duration="720 seconds", termination="3.0 V")
     
-    subcycle_commuteP = ["Rest for 8 hours (30 minute period)", 
+    subcycle_commute = ["Rest for 8 hours (30 minute period)", 
                         step_P, 
                         "Rest for 8 hours (30 minute period)", 
                         step_P,
@@ -314,15 +311,15 @@ def app():
 
     subcycle_rest = {subcycle_rest}
 
-    commuteP = {commuteP}
+    commute = {commute}
 
-    exp = pybamm.Experiment([commuteP])
+    exp = pybamm.Experiment([commute])
     ''')
 
     if st.button('Run PyBaMM Simulation with Normalized Power Data'):
 
         model = pybamm.lithium_ion.SPM()
-        sim = pybamm.Simulation(model, experiment=pybamm.Experiment([(*subcycle_commuteP, *subcycle_commuteP, *subcycle_commuteP, *subcycle_commuteP, *subcycle_rest, *subcycle_rest, *subcycle_charge)]), solver=pybamm.IDAKLUSolver())
+        sim = pybamm.Simulation(model, experiment=pybamm.Experiment([(*subcycle_commute, *subcycle_rest, *subcycle_commute, *subcycle_rest, *subcycle_commute, *subcycle_rest, *subcycle_charge)]), solver=pybamm.IDAKLUSolver())
 
         sol = sim.solve()
         time = sol["Time [s]"].entries

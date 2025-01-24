@@ -7,16 +7,11 @@ from data_analysis import load_data, stats_calc, user_power_division, riding_eve
 
 
 @st.cache_data
-def prepare_data():
-    filtered_dict_I, data_filtered, dc_all = load_data()
-
+def prepare_data(filtered_dict_I, data_filtered, dc_all):
     for df in filtered_dict_I.values():
         df['Power'] = df['Voltage'] * df['Current']
 
     stats_all = stats_calc(filtered_dict_I)
-    # stats_all['Date'] = pd.to_datetime(stats_all['Date'])
-    # stats_all['Day of Week'] = stats_all['Date'].dt.day_name()
-
     user_all = user_stat(dc_all)
     user_all['Date'] = pd.to_datetime(user_all['Date'])
     user_all['Day of Week'] = user_all['Date'].dt.day_name()
@@ -26,18 +21,14 @@ def prepare_data():
 
     stats_discharge = stats_all[stats_all["Mean Power [W]"] > 0]
 
-    df_temps = stats_discharge[['Drive Cycle ID', 'High_P', 'Medium_P', 'Low_P']]
-    violin_df = pd.melt(df_temps, id_vars=['Drive Cycle ID'], 
-                        value_vars=['High_P', 'Medium_P', 'Low_P'],
-                        var_name='Load Type', value_name='Load')
-
-    return filtered_dict_I, day_behaviour, violin_df, stats_all, user_all
+    return day_behaviour, stats_all, user_all
 
 
 def app():
-    st.title('User Behaviour')
-    dc_all_fil, data_all, dc_all = load_data()
-    cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in dc_all.items()}
+    filtered_dict_I, data_filtered, dc_all = st.session_state.dc_all_fil, st.session_state.data_all, st.session_state.dc_all
+    day_behaviour, stats_all, user_all = prepare_data(filtered_dict_I, data_filtered, dc_all)
+    
+    cycle_status = {key: 'charge' if (np.mean(df['Current']) <= 0) else 'discharge' for key, df in st.session_state.dc_all.items()}
 
     # Calculate statistics once
     charge_dict = {k: v for k, v in dc_all.items() if cycle_status[k] == 'charge'}
@@ -67,7 +58,7 @@ def app():
     pwr_discharge = pwr_percent[pwr_percent.index.isin(discharge_dict.keys())].drop(columns='P_charge')
     # pwr_charge = pwr_df[pwr_df.index.isin(charge_dict.keys())]
 
-    stats_all = stats_calc(dc_all_fil)
+    stats_all = stats_calc(filtered_dict_I)
 
     # Preprocess the data
     pwr_df['Date'] = dates
@@ -107,38 +98,45 @@ def app():
     st.plotly_chart(fig_hist, use_container_width=True)
 
     st.write("Utilising these bins we can now evaluate the individual distribtions within each trip.")
-
-    fig_hist = go.Figure()
-    fig_hist.add_trace(go.Histogram(
-        x=pwr_discharge['P_high'], 
-        histnorm='probability density',
-        xbins=dict(
-            size=0.01  # Bin width of 0.01
-        ), name='High Power'
-    ))
-    fig_hist.add_trace(go.Histogram(
-        x=pwr_discharge['P_mid'], 
-        histnorm='probability density',
-        xbins=dict(
-            size=0.01  # Bin width of 0.01
-        ), name='Medium Power'
-    ))
-    fig_hist.add_trace(go.Histogram(
-        x=pwr_discharge['P_low'], 
-        histnorm='probability density',
-        xbins=dict(
-            size=0.01  # Bin width of 0.01
-        ), name='Low Power'
-    ))
-    fig_hist.update_layout(
-        title='Power Distribution during Discharge',
-        xaxis_title='Proportional Time in Power Category',
-        yaxis_title='Probability Density',
+    st.write(pwr_discharge)
+    fig_pie_dist = go.Figure(data=[go.Pie(labels=['High Power', 'Medium Power', 'Low Power'], values=pwr_discharge.mean(axis=0))])
+    fig_pie_dist.update_layout(
+        title='Average Power Distribution',
         height=600,
-        legend_title='Power Category',
-
     )
-    st.plotly_chart(fig_hist, use_container_width=True)
+    st.plotly_chart(fig_pie_dist, use_container_width=True)
+
+    # fig_hist = go.Figure()
+    # fig_hist.add_trace(go.Histogram(
+    #     x=pwr_discharge['P_high'], 
+    #     histnorm='probability density',
+    #     xbins=dict(
+    #         size=0.01  # Bin width of 0.01
+    #     ), name='High Power'
+    # ))
+    # fig_hist.add_trace(go.Histogram(
+    #     x=pwr_discharge['P_mid'], 
+    #     histnorm='probability density',
+    #     xbins=dict(
+    #         size=0.01  # Bin width of 0.01
+    #     ), name='Medium Power'
+    # ))
+    # fig_hist.add_trace(go.Histogram(
+    #     x=pwr_discharge['P_low'], 
+    #     histnorm='probability density',
+    #     xbins=dict(
+    #         size=0.01  # Bin width of 0.01
+    #     ), name='Low Power'
+    # ))
+    # fig_hist.update_layout(
+    #     title='Power Distribution during Discharge',
+    #     xaxis_title='Proportional Time in Power Category',
+    #     yaxis_title='Probability Density',
+    #     height=600,
+    #     legend_title='Power Category',
+
+    # )
+    # st.plotly_chart(fig_hist, use_container_width=True)
 
 
     st.write("Combining this information with the preprocessing data, we can develop a stepped load profile to take in to account this power division. The following pybamm experiment definition presents this load profile.")
@@ -174,7 +172,7 @@ def app():
         pybamm_plot(no_rest_exp)
     
     st.write("Stepped Load Profile With Rests:")
-    t_total_all = (data_all['DateTime'].iloc[-1] - data_all['DateTime'].iloc[0]).total_seconds()
+    t_total_all = (data_filtered['DateTime'].iloc[-1] - data_filtered['DateTime'].iloc[0]).total_seconds()
     t_charge = stats_all[stats_all.index.isin(discharge_dict.keys())]['Duration [s]'].sum()/t_total_all
     t_discharge = (stats_all[stats_all.index.isin(charge_dict.keys())]['Duration [s]'].sum())/t_total_all
     t_off = 1 - t_charge - t_discharge

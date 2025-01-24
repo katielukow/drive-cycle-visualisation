@@ -1,0 +1,18 @@
+# .streamlit/config.toml
+# drivee cycle visualization
+
+[server]
+#headless = true  # Run Streamlit in headless mode, ideal for cloud deployments
+port = 8501      # Define the port for the Streamlit app
+#enableCORS = false  # Disable CORS if deploying within the same domain
+
+[theme]
+base= "dark"
+primaryColor="#ff4b4b"
+backgroundColor="#ffffff"
+secondaryBackgroundColor="#f0f2f6"
+textColor="#31333F"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false  # Disable collection of usage statistics for privacy
