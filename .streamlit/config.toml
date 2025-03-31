@@ -1,5 +1,5 @@
 # .streamlit/config.toml
-# drivee cycle visualization
+# drive cycle visualization
 
 [server]
 #headless = true  # Run Streamlit in headless mode, ideal for cloud deployments

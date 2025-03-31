@@ -37,7 +37,7 @@ page_files = [f for f in os.listdir(PAGES_DIR) if f.endswith('.py')]
 pages = {f.replace('.py', '').replace('_', ' ').title(): os.path.join(PAGES_DIR, f) for f in page_files}
 
 def app():
-    st.title('Battery Data Analysis')
+    st.title('Drive Cycle Identification for Real-World Field Data')
     if "data_path" not in st.session_state:
         st.session_state.data_path = ""  # Default value
     st.session_state.data_path = st.text_input(

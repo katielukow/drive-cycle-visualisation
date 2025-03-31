@@ -84,7 +84,7 @@ def create_commute_experiment(commute_days):
     commute = []
 
     # Append subcycle_commute and subcycle_rest for each commute day
-    if commute_days < 4:
+    if commute_days < 1:
         for _ in range(commute_days):
             commute.extend(subcycle_commute)
             commute.extend(subcycle_rest)
@@ -96,7 +96,7 @@ def create_commute_experiment(commute_days):
             commute.extend(subcycle_commute)
         remaining_days = 7 - commute_days - 1
         commute.extend(subcycle_rest * remaining_days)
-    
+
     commute.extend(subcycle_charge)
 
     commute_str = str(commute).replace("[", "(").replace("]", ")").replace("'", "")
@@ -166,13 +166,13 @@ def app():
 
     step_per = pwr_discharge.mean(axis=0)
     t_total = 500
-    t_h = int(step_per.P_high * t_total)
-    t_m = int(step_per.P_mid * t_total)
-    t_l = int(step_per.P_low * t_total)
+    t_h = int(st.session_state.t_h / commuting_days / 2)
+    t_m = int(st.session_state.t_m / commuting_days / 2)
+    t_l = int(st.session_state.t_l / commuting_days / 2)
 
-    I_h = np.round(np.abs(np.mean(bins_I[0]))/Q_pack,2)
+    I_h = np.round(np.abs(np.mean(bins_I[2]))/Q_pack,2)
     I_m = np.round(np.abs(np.mean(bins_I[1]))/Q_pack,2)
-    I_l = np.round(np.abs(np.mean(bins_I[2]))/Q_pack,2)
+    I_l = np.round(np.abs(np.mean(bins_I[0]))/Q_pack,2)
 
 
     fig_days = go.Figure()
@@ -194,13 +194,13 @@ def app():
     st.write("The first experiment we create is a weekly representative load profile with the stepped load from before.")
 
     subcycle_commute = ["Rest for 8 hours (30 minute period)", 
-                        "Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 3 V",
-                        "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 3 V",
-                        "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 3 V", 
+                        "Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 2.5 V",
+                        "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 2.5 V",
+                        "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 2.5 V", 
                         "Rest for 8 hours (30 minute period)", 
-                        "Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 3 V",
-                        "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 3 V",
-                        "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 3 V", 
+                        "Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 2.5 V",
+                        "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 2.5 V",
+                        "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 2.5 V", 
                         "Rest for 8 hours (30 minute period)"
                         ]
 
@@ -217,7 +217,11 @@ def app():
     ```python
     subcycle_commute = {subcycle_commute}
 
-    subcycle_charge = {subcycle_charge}
+    subcycle_charge = ["Rest for 12 hours (30 minute period)", 
+                    "Charge at {I_charge}C until 4.2 V",
+                    "Hold at 4.2 V until 50 mA",
+                    "Rest for 10 hours (30 minute period)"
+                    ]
 
     subcycle_rest = {subcycle_rest}
 
@@ -231,8 +235,13 @@ def app():
     # Add a button
     if st.button('Run PyBaMM Simulation'):
 
+
+        commute = (*subcycle_commute, *subcycle_commute, *subcycle_commute, *subcycle_commute, *subcycle_rest, *subcycle_rest, *subcycle_charge)
+        exp = pybamm.Experiment([commute])
+
         model = pybamm.lithium_ion.SPM()
-        sim = pybamm.Simulation(model, experiment=pybamm.Experiment([(*subcycle_commute, *subcycle_commute, *subcycle_commute, *subcycle_commute, *subcycle_rest, *subcycle_rest, *subcycle_charge)]), solver=pybamm.IDAKLUSolver())
+        parameters = pybamm.ParameterValues("OKane2022")
+        sim = pybamm.Simulation(model, parameter_values = parameters, experiment=exp, solver=pybamm.IDAKLUSolver())
 
         sol = sim.solve()
         time = sol["Time [s]"].entries
@@ -267,25 +276,25 @@ def app():
     st.write("The load profile can be taken one step further where a dynamic load profile can be extracted from the raw data and replace the stepped profile. Initially, a load profile is taken from the selection as representative through the energy used. Mean energy is calculated and the drive cycle with a energy clsoest to the mean is selected. The next page will further investigate the selection of this drive cycle and other methods to determine the representivity of the load profile.")
     
     discharge_df['Power'] = (discharge_df['Voltage']/10)*(discharge_df['Current']/4) # Power = V*I (W). Negative sign to match pybamm syntax. 
-    data_temp = discharge_df[['Time', 'Power']]
-    data_temp['Power'].iloc[0]  = 0
+    data_temp = discharge_df[['Time', 'Current']]
+    # data_temp['Power'].iloc[0]  = 0
 
     dT = 2.3
     normal_time = np.arange(0, data_temp['Time'].max(), dT)
-    power_interp = np.interp(normal_time, data_temp['Time'], data_temp['Power']*.8)
-    normalized_power = pd.DataFrame({'Time': normal_time, 'Power': power_interp})
+    power_interp = np.interp(normal_time, data_temp['Time'], data_temp['Current']/4/2.5*2) # multiply power by two to account for the used cell for modelling having being 5 Ah instead of 2.5 Ah
+    normalized_current = pd.DataFrame({'Time': normal_time, 'Current': power_interp})
     # Convert DataFrame directly to CSV format
-    csv_data = normalized_power.to_csv(index=False)
+    csv_data = normalized_current.to_csv(index=False)
 
     # Create the download button
     st.download_button(
-        label="Download Normalized Power Data",
+        label="Download Normalized Current Data",
         data=csv_data,
-        file_name='normalized_power.csv',
+        file_name='normalized_current.csv',
         mime='text/csv'
     )
 
-    step_P = pybamm.step.power(value=normalized_power.values, duration="720 seconds", termination="3.0 V")
+    step_P = pybamm.step.current(value=normalized_current.values, duration=902, termination="3.0 V")
 
     subcycle_commute = ["Rest for 8 hours (30 minute period)", 
                         step_P, 
@@ -319,7 +328,8 @@ def app():
     if st.button('Run PyBaMM Simulation with Normalized Power Data'):
 
         model = pybamm.lithium_ion.SPM()
-        sim = pybamm.Simulation(model, experiment=pybamm.Experiment([(*subcycle_commute, *subcycle_rest, *subcycle_commute, *subcycle_rest, *subcycle_commute, *subcycle_rest, *subcycle_charge)]), solver=pybamm.IDAKLUSolver())
+        parameters = pybamm.ParameterValues("OKane2022")
+        sim = pybamm.Simulation(model=model, parameter_values=parameters, experiment=pybamm.Experiment(subcycle_commute*commuting_days + subcycle_rest * (7-commuting_days-1)+subcycle_charge), solver=pybamm.IDAKLUSolver())
 
         sol = sim.solve()
         time = sol["Time [s]"].entries

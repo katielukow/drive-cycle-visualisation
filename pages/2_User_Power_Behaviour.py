@@ -98,7 +98,7 @@ def app():
     st.plotly_chart(fig_hist, use_container_width=True)
 
     st.write("Utilising these bins we can now evaluate the individual distribtions within each trip.")
-    st.write(pwr_discharge)
+    # st.write(pwr_discharge)
     fig_pie_dist = go.Figure(data=[go.Pie(labels=['High Power', 'Medium Power', 'Low Power'], values=pwr_discharge.mean(axis=0))])
     fig_pie_dist.update_layout(
         title='Average Power Distribution',
@@ -143,18 +143,39 @@ def app():
 
     I_charge = np.round(abs(charge_rate(charge_dict)/ Q_pack),1)
     step_per = pwr_discharge.mean(axis=0)
-    t_total = 0.5*60*60
-    t_h = int(step_per.P_high * t_total)
-    t_m = int(step_per.P_mid * t_total)
-    t_l = int(step_per.P_low * t_total)
+    time_discharge = stats_calc(discharge_dict)["Duration [s]"].sum()
+    time_charge = stats_calc(charge_dict)["Duration [s]"].sum()
+    total_time = (st.session_state.data_all['DateTime'].iloc[-1] - st.session_state.data_all['DateTime'].iloc[0]).total_seconds()
+    time_off = total_time - time_discharge - time_charge
+    time_data = pd.Series({
+            'Discharge': time_discharge,
+            'Charge': time_charge,
+            'Off': time_off
+        })
 
-    I_h = np.round(np.abs(np.mean(bins_I[0]))/Q_pack,2)
+
+    I_l = np.round(np.abs(np.mean(bins_I[0]))/Q_pack,2)
     I_m = np.round(np.abs(np.mean(bins_I[1]))/Q_pack,2)
-    I_l = np.round(np.abs(np.mean(bins_I[2]))/Q_pack,2)
+    I_h = np.round(np.abs(np.mean(bins_I[2]))/Q_pack,2)
 
-    no_rest_exp = ["Discharge at " + str(I_l) + "C for " + str(t_l) + " seconds or until 3 V",
-                            "Discharge at " + str(I_m) + "C for " + str(t_m) + " seconds or until 3 V",
-                            "Discharge at " + str(I_h) + "C for " + str(t_h) + " seconds or until 3 V",
+    t_dis = 1 / ((step_per.P_high) * I_h + (step_per.P_mid) * I_m + (step_per.P_low) * I_l) * 3600
+    # discharge_time = 1/I_discharge 
+    total_time = np.round(t_dis / (time_data['Discharge']/time_data.sum(axis=0)),2)
+    st.write("Total Time: ", total_time)
+    st.write("Discharge Time: ", t_dis)
+
+    # t_dis = t_total * t_discharge
+    st.session_state.t_h = int(step_per.P_high * t_dis)
+    st.session_state.t_m = int(step_per.P_mid * t_dis)
+    st.session_state.t_l = int(step_per.P_low * t_dis)
+    # t_r = int(t_off * t_total) / 3600
+    t_r = np.round((t_dis / (time_data['Discharge']/time_data.sum(axis=0)) - t_dis - 1/I_charge * 3600) / 3600,2)
+    # st.write(step_per, t_dis, bins_I[0], I_h)
+
+
+    no_rest_exp = ["Discharge at " + str(I_l) + "C for " + str(st.session_state.t_l) + " seconds or until 2.5 V",
+                            "Discharge at " + str(I_m) + "C for " + str(st.session_state.t_m) + " seconds or until 2.5 V",
+                            "Discharge at " + str(I_h) + "C for " + str(st.session_state.t_h) + " seconds or until 2.5 V",
                             "Charge at " + str(I_charge) + "C until 4.2 V",
                             "Hold at 4.2 V until 50 mA"
                             ]
@@ -172,25 +193,25 @@ def app():
         pybamm_plot(no_rest_exp)
     
     st.write("Stepped Load Profile With Rests:")
-    t_total_all = (data_filtered['DateTime'].iloc[-1] - data_filtered['DateTime'].iloc[0]).total_seconds()
-    t_charge = stats_all[stats_all.index.isin(discharge_dict.keys())]['Duration [s]'].sum()/t_total_all
-    t_discharge = (stats_all[stats_all.index.isin(charge_dict.keys())]['Duration [s]'].sum())/t_total_all
-    t_off = 1 - t_charge - t_discharge
+    # t_total_all = (data_filtered['DateTime'].iloc[-1] - data_filtered['DateTime'].iloc[0]).total_seconds()
+    # t_charge = stats_all[stats_all.index.isin(discharge_dict.keys())]['Duration [s]'].sum()/t_total_all
+    # t_discharge = (stats_all[stats_all.index.isin(charge_dict.keys())]['Duration [s]'].sum())/t_total_all
+    # t_off = 1 - t_charge - t_discharge
 
-    t_total = 24 * 3600
-    t_dis = t_total * t_discharge
-    t_h = int(step_per.P_high * t_dis)
-    t_m = int(step_per.P_mid * t_dis)
-    t_l = int(step_per.P_low * t_dis)
-    t_r = int(t_off * t_total)
+    # t_total = 24 * 3600
+    # t_dis = t_total * t_discharge
+    # t_h = int(step_per.P_high * t_dis)
+    # t_m = int(step_per.P_mid * t_dis)
+    # t_l = int(step_per.P_low * t_dis)
+    # t_r = int(t_off * t_total)
     
     rest_exp = [
-        "Discharge at " + str(I_l) + "C for " + str(t_l) + "seconds or until 3 V",
-        "Discharge at " + str(I_m) + "C for " + str(t_m) + "seconds or until 3 V",
-        "Discharge at " + str(I_h) + "C for " + str(t_h) + "seconds or until 3 V",
+        "Discharge at " + str(I_l) + "C for " + str(st.session_state.t_l) + " seconds or until 2.5 V",
+        "Discharge at " + str(I_m) + "C for " + str(st.session_state.t_m) + " seconds or until 2.5 V",
+        "Discharge at " + str(I_h) + "C for " + str(st.session_state.t_h) + " seconds or until 2.5 V",
         "Charge at " + str(I_charge) + "C until 4.2 V",
         "Hold at 4.2 V until 50 mA",
-        "Rest for " + str(t_r) + " seconds (60 minute period)"]
+        "Rest for " + str(t_r) + " hours (60 minute period)"]
     
     formatted_rest = ',\n        '.join(f'"{step}"' for step in rest_exp)
     st.markdown(f"""
